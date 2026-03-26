@@ -14,10 +14,11 @@ export async function GET() {
     for (const page of response.results) {
       if (!("properties" in page)) continue;
 
-      const props: any = page.properties;
+      const safePage = page as any;
+      const props = safePage.properties ?? {};
 
       results.push({
-        id: page.id,
+        id: safePage.id,
         title:
           props["Task"]?.title?.[0]?.plain_text ||
           props["Task name"]?.title?.[0]?.plain_text ||
@@ -31,7 +32,7 @@ export async function GET() {
           "Unknown",
         assignee: props["Assignee"]?.people?.[0]?.name,
         databaseId: dbId,
-        url: page.url,
+        url: safePage.url,
       });
     }
   }
