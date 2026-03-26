@@ -2,16 +2,6 @@ import { notion } from "@/lib/notion";
 import { DATABASE_IDS } from "@/lib/config";
 import { NextResponse } from "next/server";
 
-function getTitle(props: any) {
-  for (const key of Object.keys(props)) {
-    const prop = props[key];
-    if (prop?.type === "title") {
-      return prop.title?.[0]?.plain_text || "Untitled";
-    }
-  }
-  return "Untitled";
-}
-
 export async function GET() {
   const results: any[] = [];
 
@@ -30,7 +20,10 @@ export async function GET() {
 
         results.push({
           id: safePage.id,
-          title: getTitle(props),
+          title:
+            props["Task"]?.title?.[0]?.plain_text ||
+            props["Task name"]?.title?.[0]?.plain_text ||
+            "Untitled",
           due:
             props["Due"]?.date?.start ||
             props["Due date"]?.date?.start,
