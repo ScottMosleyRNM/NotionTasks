@@ -1,0 +1,743 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  ArrowRight,
+  ExternalLink,
+  FolderTree,
+  Inbox,
+  ListChecks,
+  Plus,
+  Search,
+  Settings2,
+  X,
+} from 'lucide-react';
+
+/**
+ * Unified Notion Tasks - simplified v3
+ *
+ * Updates in this version:
+ * - lighter dark mode with higher contrast
+ * - support for page body content in the task detail view
+ * - direct link out to Notion from each task detail sheet
+ * - keeps the hybrid database discovery/product direction
+ */
+
+type AppView = 'tasks' | 'inbox' | 'databases';
+
+type TaskDatabase = {
+  id: string;
+  name: string;
+  workspace?: string;
+  statuses: string[];
+  icon?: string;
+};
+
+type TaskItem = {
+  id: string;
+  title: string;
+  due?: string;
+  status: string;
+  assignee?: string;
+  databaseId?: string;
+  databaseName?: string;
+  url?: string;
+  createdTime: string;
+  lastEditedTime: string;
+  extraProperties?: Record<string, string>;
+};
+
+const STORAGE_KEY = 'unified-notion-tasks-v3';
+
+const sampleDatabases: TaskDatabase[] = [
+  {
+    id: 'db-product',
+    name: 'Product Tasks',
+    workspace: 'Work',
+    statuses: ['Not started', 'In progress', 'Blocked', 'Done'],
+    icon: '📦',
+  },
+  {
+    id: 'db-design',
+    name: 'Design Queue',
+    workspace: 'Work',
+    statuses: ['Backlog', 'Active', 'Review', 'Done'],
+    icon: '🎨',
+  },
+  {
+    id: 'db-personal',
+    name: 'Personal Tasks',
+    workspace: 'Personal',
+    statuses: ['Todo', 'Doing', 'Done'],
+    icon: '🏠',
+  },
+];
+
+const sampleTasks: TaskItem[] = [
+  {
+    id: 'task-1',
+    title: 'Finalize mobile task app scope',
+    due: today(),
+    status: 'In progress',
+    assignee: 'Scott',
+    databaseId: 'db-product',
+    databaseName: 'Product Tasks',
+    url: 'https://www.notion.so/',
+    createdTime: new Date().toISOString(),
+    lastEditedTime: new Date().toISOString(),
+    extraProperties: {
+      Priority: 'High',
+      Sprint: 'Current',
+      Body: 'Scope the first release around a unified task feed, database-aware editing, and a lightweight mobile-first interface.',
+    },
+  },
+  {
+    id: 'task-2',
+    title: 'Review Figma spacing and hierarchy',
+    due: addDays(today(), 1),
+    status: 'Review',
+    assignee: 'Scott',
+    databaseId: 'db-design',
+    databaseName: 'Design Queue',
+    url: 'https://www.notion.so/',
+    createdTime: new Date().toISOString(),
+    lastEditedTime: new Date().toISOString(),
+    extraProperties: {
+      Owner: 'Design',
+      Surface: 'Mobile',
+      Body: 'Check contrast, spacing rhythm, touch target sizes, and simplify the visual system for dark mode.',
+    },
+  },
+  {
+    id: 'task-3',
+    title: 'Book dentist appointment',
+    due: addDays(today(), 3),
+    status: 'Todo',
+    assignee: 'Scott',
+    databaseId: 'db-personal',
+    databaseName: 'Personal Tasks',
+    url: 'https://www.notion.so/',
+    createdTime: new Date().toISOString(),
+    lastEditedTime: new Date().toISOString(),
+    extraProperties: {
+      Area: 'Personal',
+      Body: 'Find two nearby offices, call to check availability, and add the confirmed time back into Notion.',
+    },
+  },
+  {
+    id: 'task-4',
+    title: 'Rough idea for future automation',
+    status: 'Inbox',
+    url: 'https://www.notion.so/',
+    createdTime: new Date().toISOString(),
+    lastEditedTime: new Date().toISOString(),
+    extraProperties: {
+      Note: 'Needs sorting into a destination DB',
+      Body: 'Potential workflow to auto-suggest task databases based on page title, assignee, and surrounding workspace context.',
+    },
+  },
+];
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function addDays(dateStr: string, days: number) {
+  const date = new Date(dateStr);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function formatDate(date?: string) {
+  if (!date) return 'No due date';
+  const d = new Date(`${date}T00:00:00`);
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(d);
+}
+
+function statusTone(status: string) {
+  const s = status.toLowerCase();
+  if (s.includes('done')) return 'text-emerald-100 border-emerald-400/25 bg-emerald-400/10';
+  if (s.includes('progress') || s.includes('active') || s.includes('doing')) return 'text-sky-100 border-sky-400/25 bg-sky-400/10';
+  if (s.includes('review')) return 'text-indigo-100 border-indigo-400/25 bg-indigo-400/10';
+  if (s.includes('block')) return 'text-rose-100 border-rose-400/25 bg-rose-400/10';
+  if (s.includes('inbox')) return 'text-amber-100 border-amber-400/25 bg-amber-400/10';
+  return 'text-zinc-100 border-zinc-500 bg-zinc-700/60';
+}
+
+const notionAdapter = {
+  async load(): Promise<{ tasks: TaskItem[]; databases: TaskDatabase[] }> {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      const seed = { tasks: sampleTasks, databases: sampleDatabases };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(seed));
+      return seed;
+    }
+    try {
+      return JSON.parse(raw);
+    } catch {
+      const seed = { tasks: sampleTasks, databases: sampleDatabases };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(seed));
+      return seed;
+    }
+  },
+  async save(payload: { tasks: TaskItem[]; databases: TaskDatabase[] }) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  },
+};
+
+export default function UnifiedNotionTasksApp() {
+  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [databases, setDatabases] = useState<TaskDatabase[]>([]);
+  const [view, setView] = useState<AppView>('tasks');
+  const [query, setQuery] = useState('');
+  const [selectedDbId, setSelectedDbId] = useState<'all' | string>('all');
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [composeTitle, setComposeTitle] = useState('');
+  const [composeDb, setComposeDb] = useState<string>('inbox');
+  const [ready, setReady] = useState(false);
+  const [showConfig, setShowConfig] = useState(false);
+
+  useEffect(() => {
+    notionAdapter.load().then((data) => {
+      setTasks(sortTasks(data.tasks));
+      setDatabases(data.databases);
+      setReady(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    notionAdapter.save({ tasks, databases });
+  }, [tasks, databases, ready]);
+
+  const selectedTask = tasks.find((task) => task.id === selectedTaskId) || null;
+  const inboxTasks = useMemo(() => sortTasks(tasks.filter((t) => !t.databaseId)), [tasks]);
+
+  const visibleTasks = useMemo(() => {
+    const base = tasks.filter((task) => {
+      if (view === 'inbox' && task.databaseId) return false;
+      if (view === 'tasks' && !task.databaseId) return false;
+      if (selectedDbId !== 'all' && task.databaseId !== selectedDbId) return false;
+      if (!query.trim()) return true;
+      const q = query.toLowerCase();
+      return [task.title, task.status, task.databaseName, task.assignee]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(q);
+    });
+    return sortTasks(base);
+  }, [tasks, view, selectedDbId, query]);
+
+  function patchTask(id: string, updates: Partial<TaskItem>) {
+    setTasks((prev) =>
+      sortTasks(
+        prev.map((task) =>
+          task.id === id
+            ? { ...task, ...updates, lastEditedTime: new Date().toISOString() }
+            : task
+        )
+      )
+    );
+  }
+
+  function createTask() {
+    const title = composeTitle.trim();
+    if (!title) return;
+    const db = composeDb === 'inbox' ? null : databases.find((d) => d.id === composeDb) || null;
+    const task: TaskItem = {
+      id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      title,
+      status: db ? db.statuses[0] || 'Not started' : 'Inbox',
+      databaseId: db?.id,
+      databaseName: db?.name,
+      url: 'https://www.notion.so/',
+      createdTime: new Date().toISOString(),
+      lastEditedTime: new Date().toISOString(),
+      extraProperties: { Body: '' },
+    };
+    setTasks((prev) => sortTasks([task, ...prev]));
+    setComposeTitle('');
+    setComposeDb('inbox');
+    setComposeOpen(false);
+    setSelectedTaskId(task.id);
+  }
+
+  function moveTaskToDatabase(taskId: string, dbId: string) {
+    const db = databases.find((d) => d.id === dbId);
+    if (!db) return;
+    const existing = tasks.find((t) => t.id === taskId);
+    patchTask(taskId, {
+      databaseId: db.id,
+      databaseName: db.name,
+      status: db.statuses.includes(existing?.status || '') ? existing?.status || db.statuses[0] : db.statuses[0] || 'Not started',
+    });
+  }
+
+  function resetDemo() {
+    setTasks(sampleTasks);
+    setDatabases(sampleDatabases);
+    setSelectedTaskId(null);
+    setView('tasks');
+    setSelectedDbId('all');
+    setQuery('');
+  }
+
+  return (
+    <div className="min-h-screen bg-zinc-900 text-zinc-50">
+      <div className="mx-auto flex min-h-screen max-w-md flex-col border-x border-zinc-700 bg-zinc-900 shadow-2xl">
+        <header className="sticky top-0 z-20 border-b border-zinc-700 bg-zinc-900/95 px-4 pb-3 pt-5 backdrop-blur">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-xs uppercase tracking-[0.22em] text-zinc-300">Unified Tasks</div>
+              <div className="mt-1 text-lg font-semibold text-zinc-50">Notion task hub</div>
+            </div>
+            <button
+              onClick={() => setShowConfig((v) => !v)}
+              className="rounded-full border border-zinc-700 p-2 text-zinc-100 transition hover:bg-zinc-800"
+            >
+              <Settings2 className="h-4 w-4" />
+            </button>
+          </div>
+
+          {showConfig && (
+            <div className="mt-3 rounded-2xl border border-zinc-700 bg-zinc-800/70 p-3 text-sm text-zinc-100">
+              <div className="mb-1 font-medium text-zinc-50">Connection model</div>
+              <div className="space-y-1 leading-5">
+                <p>Use hybrid discovery: auto-detect likely task databases, then let you confirm which ones feed the unified list.</p>
+                <p>Task detail should fetch the full page properties plus page body, and provide a direct Notion link for comments and richer editing.</p>
+              </div>
+            </div>
+          )}
+
+          <div className="mt-3 grid grid-cols-3 gap-2 rounded-2xl bg-zinc-800 p-1">
+            <NavTab active={view === 'tasks'} onClick={() => setView('tasks')} icon={ListChecks} label="Tasks" />
+            <NavTab active={view === 'inbox'} onClick={() => setView('inbox')} icon={Inbox} label="Inbox" />
+            <NavTab active={view === 'databases'} onClick={() => setView('databases')} icon={FolderTree} label="DBs" />
+          </div>
+
+          {view !== 'databases' && (
+            <div className="mt-3 flex gap-2">
+              <div className="flex flex-1 items-center gap-2 rounded-2xl border border-zinc-700 bg-zinc-800 px-3 py-2.5">
+                <Search className="h-4 w-4 text-zinc-200" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search tasks"
+                  className="w-full bg-transparent text-sm text-zinc-50 outline-none placeholder:text-zinc-400"
+                />
+              </div>
+              <button
+                onClick={() => setComposeOpen(true)}
+                className="rounded-2xl bg-sky-300 px-4 py-2.5 text-sm font-medium text-zinc-950"
+              >
+                Add
+              </button>
+            </div>
+          )}
+        </header>
+
+        <main className="flex-1 overflow-y-auto px-4 pb-28 pt-4">
+          {view !== 'databases' && (
+            <DatabaseFilter selected={selectedDbId} databases={databases} onChange={setSelectedDbId} />
+          )}
+
+          {view === 'tasks' && (
+            <section className="space-y-3">
+              <SectionHeader title="All tasks" subtitle={`${visibleTasks.length} tasks across ${databases.length} databases`} />
+              {visibleTasks.length === 0 ? (
+                <EmptyState title="No matching tasks" subtitle="Try changing the filter or add a new task." />
+              ) : (
+                visibleTasks.map((task) => <TaskRow key={task.id} task={task} onClick={() => setSelectedTaskId(task.id)} />)
+              )}
+            </section>
+          )}
+
+          {view === 'inbox' && (
+            <section className="space-y-3">
+              <SectionHeader title="Inbox" subtitle="Capture tasks here, then route them into the right database" />
+              {inboxTasks.length === 0 ? (
+                <EmptyState title="Inbox is clear" subtitle="New quick captures can live here until you sort them." />
+              ) : (
+                inboxTasks.map((task) => (
+                  <InboxRow
+                    key={task.id}
+                    task={task}
+                    databases={databases}
+                    onOpen={() => setSelectedTaskId(task.id)}
+                    onMove={moveTaskToDatabase}
+                  />
+                ))
+              )}
+            </section>
+          )}
+
+          {view === 'databases' && (
+            <section className="space-y-3">
+              <SectionHeader title="Task databases" subtitle="These are the sources that feed the unified list" />
+              {databases.map((db) => {
+                const count = tasks.filter((t) => t.databaseId === db.id).length;
+                return (
+                  <div key={db.id} className="rounded-2xl border border-zinc-700 bg-zinc-800/70 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-zinc-50">
+                          <span className="mr-2">{db.icon || '🗂️'}</span>
+                          {db.name}
+                        </div>
+                        <div className="mt-1 text-xs text-zinc-200">{db.workspace || 'Workspace'} · {count} tasks</div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setSelectedDbId(db.id);
+                          setView('tasks');
+                        }}
+                        className="rounded-xl border border-zinc-700 px-3 py-2 text-sm text-zinc-100"
+                      >
+                        View
+                      </button>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {db.statuses.map((status) => (
+                        <span key={status} className={`rounded-full border px-2 py-1 text-xs ${statusTone(status)}`}>
+                          {status}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </section>
+          )}
+        </main>
+
+        <footer className="fixed bottom-0 left-1/2 z-20 w-full max-w-md -translate-x-1/2 border-t border-zinc-700 bg-zinc-900/95 px-4 pb-5 pt-3 backdrop-blur">
+          <div className="flex items-center justify-between rounded-2xl bg-zinc-800 px-4 py-3 text-sm text-zinc-100">
+            <div>{tasks.filter((t) => t.databaseId).length} assigned · {tasks.filter((t) => !t.databaseId).length} inbox</div>
+            <button onClick={resetDemo} className="text-zinc-50">Reset demo</button>
+          </div>
+        </footer>
+
+        {composeOpen && (
+          <ComposeSheet
+            title={composeTitle}
+            setTitle={setComposeTitle}
+            destination={composeDb}
+            setDestination={setComposeDb}
+            databases={databases}
+            onClose={() => setComposeOpen(false)}
+            onSubmit={createTask}
+          />
+        )}
+
+        {selectedTask && (
+          <TaskDetailSheet
+            task={selectedTask}
+            database={databases.find((d) => d.id === selectedTask.databaseId) || null}
+            databases={databases}
+            onClose={() => setSelectedTaskId(null)}
+            onPatch={patchTask}
+            onMoveToDatabase={moveTaskToDatabase}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function NavTab({ active, onClick, icon: Icon, label }: { active: boolean; onClick: () => void; icon: any; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm transition ${
+        active ? 'bg-sky-300 text-zinc-950' : 'text-zinc-100 hover:bg-zinc-700'
+      }`}
+    >
+      <Icon className="h-4 w-4" />
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <div>
+      <div className="text-lg font-semibold text-zinc-50">{title}</div>
+      <div className="mt-1 text-sm text-zinc-200">{subtitle}</div>
+    </div>
+  );
+}
+
+function DatabaseFilter({ selected, databases, onChange }: { selected: 'all' | string; databases: TaskDatabase[]; onChange: (v: 'all' | string) => void }) {
+  return (
+    <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
+      <FilterChip active={selected === 'all'} onClick={() => onChange('all')} label="All DBs" />
+      {databases.map((db) => (
+        <FilterChip key={db.id} active={selected === db.id} onClick={() => onChange(db.id)} label={db.name} />
+      ))}
+    </div>
+  );
+}
+
+function FilterChip({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-xs transition ${
+        active ? 'border-sky-300 bg-sky-300/10 text-sky-100' : 'border-zinc-700 text-zinc-100'
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function TaskRow({ task, onClick }: { task: TaskItem; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full rounded-2xl border border-zinc-700 bg-zinc-800/70 p-4 text-left transition hover:border-zinc-500"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium text-zinc-50">{task.title}</div>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-100">
+            <span className="rounded-full border border-zinc-700 px-2 py-1">{formatDate(task.due)}</span>
+            <span className={`rounded-full border px-2 py-1 ${statusTone(task.status)}`}>{task.status}</span>
+            <span className="rounded-full border border-zinc-700 px-2 py-1">{task.databaseName || 'Inbox'}</span>
+          </div>
+        </div>
+        <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 text-zinc-200" />
+      </div>
+    </button>
+  );
+}
+
+function InboxRow({ task, databases, onOpen, onMove }: { task: TaskItem; databases: TaskDatabase[]; onOpen: () => void; onMove: (taskId: string, dbId: string) => void }) {
+  return (
+    <div className="rounded-2xl border border-zinc-700 bg-zinc-800/70 p-4">
+      <button onClick={onOpen} className="w-full text-left">
+        <div className="text-sm font-medium text-zinc-50">{task.title}</div>
+        <div className="mt-1 text-xs text-zinc-200">Captured in inbox · open to edit details</div>
+      </button>
+      <div className="mt-3 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900/70">
+        <select
+          defaultValue=""
+          onChange={(e) => e.target.value && onMove(task.id, e.target.value)}
+          className="w-full bg-transparent px-3 py-3 text-sm text-zinc-50 outline-none"
+        >
+          <option value="" className="bg-zinc-900">Move to database…</option>
+          {databases.map((db) => (
+            <option key={db.id} value={db.id} className="bg-zinc-900">{db.name}</option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+}
+
+function ComposeSheet({ title, setTitle, destination, setDestination, databases, onClose, onSubmit }: { title: string; setTitle: (v: string) => void; destination: string; setDestination: (v: string) => void; databases: TaskDatabase[]; onClose: () => void; onSubmit: () => void }) {
+  return (
+    <div className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm">
+      <div className="absolute bottom-0 left-0 right-0 rounded-t-3xl border-t border-zinc-700 bg-zinc-900 p-4 shadow-2xl">
+        <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-zinc-700" />
+        <div className="mb-1 text-lg font-semibold text-zinc-50">New task</div>
+        <div className="mb-4 text-sm text-zinc-200">Create directly in a database or save to inbox.</div>
+        <div className="space-y-3">
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Task title"
+            className="w-full rounded-2xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-sm text-zinc-50 outline-none placeholder:text-zinc-400"
+          />
+          <select
+            value={destination}
+            onChange={(e) => setDestination(e.target.value)}
+            className="w-full rounded-2xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-sm text-zinc-50 outline-none"
+          >
+            <option value="inbox">Inbox</option>
+            {databases.map((db) => (
+              <option key={db.id} value={db.id}>{db.name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="mt-4 flex gap-2">
+          <button onClick={onClose} className="flex-1 rounded-2xl border border-zinc-700 px-4 py-3 text-sm text-zinc-100">Cancel</button>
+          <button onClick={onSubmit} className="flex-1 rounded-2xl bg-sky-300 px-4 py-3 text-sm font-medium text-zinc-950">Create</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TaskDetailSheet({ task, database, databases, onClose, onPatch, onMoveToDatabase }: { task: TaskItem; database: TaskDatabase | null; databases: TaskDatabase[]; onClose: () => void; onPatch: (id: string, updates: Partial<TaskItem>) => void; onMoveToDatabase: (taskId: string, dbId: string) => void }) {
+  const statuses = database?.statuses || ['Inbox'];
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm">
+      <div className="absolute inset-x-0 bottom-0 top-10 overflow-hidden rounded-t-3xl border-t border-zinc-700 bg-zinc-900 shadow-2xl">
+        <div className="flex items-center justify-between border-b border-zinc-700 px-4 py-4">
+          <div className="text-sm font-medium text-zinc-50">Task detail</div>
+          <div className="flex items-center gap-2">
+            {task.url && (
+              <a
+                href={task.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 rounded-full border border-zinc-700 px-3 py-2 text-sm text-zinc-50 transition hover:bg-zinc-800"
+              >
+                <ExternalLink className="h-4 w-4" />
+                Open in Notion
+              </a>
+            )}
+            <button onClick={onClose} className="rounded-full border border-zinc-700 p-2 text-zinc-100">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        <div className="h-full overflow-y-auto px-4 pb-8 pt-4">
+          <div className="rounded-2xl border border-zinc-700 bg-zinc-800/70 p-4">
+            <label className="mb-2 block text-xs uppercase tracking-[0.18em] text-zinc-200">Task</label>
+            <textarea
+              value={task.title}
+              onChange={(e) => onPatch(task.id, { title: e.target.value })}
+              className="min-h-[88px] w-full resize-none bg-transparent text-lg font-semibold text-zinc-50 outline-none"
+            />
+          </div>
+
+          <div className="mt-4 space-y-3 rounded-2xl border border-zinc-700 bg-zinc-800/70 p-4">
+            <PropertyRow label="Database">
+              <select
+                value={task.databaseId || ''}
+                onChange={(e) => {
+                  if (!e.target.value) return;
+                  onMoveToDatabase(task.id, e.target.value);
+                }}
+                className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-50 outline-none"
+              >
+                <option value="">Inbox</option>
+                {databases.map((db) => (
+                  <option key={db.id} value={db.id}>{db.name}</option>
+                ))}
+              </select>
+            </PropertyRow>
+
+            <PropertyRow label="Status">
+              <select
+                value={task.status}
+                onChange={(e) => onPatch(task.id, { status: e.target.value })}
+                className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-50 outline-none"
+              >
+                {statuses.map((status) => (
+                  <option key={status} value={status}>{status}</option>
+                ))}
+              </select>
+            </PropertyRow>
+
+            <PropertyRow label="Due">
+              <input
+                type="date"
+                value={task.due || ''}
+                onChange={(e) => onPatch(task.id, { due: e.target.value || undefined })}
+                className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-50 outline-none"
+              />
+            </PropertyRow>
+
+            <PropertyRow label="Assignee">
+              <input
+                value={task.assignee || ''}
+                onChange={(e) => onPatch(task.id, { assignee: e.target.value || undefined })}
+                placeholder="Assign to..."
+                className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-50 outline-none placeholder:text-zinc-400"
+              />
+            </PropertyRow>
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-zinc-700 bg-zinc-800/70 p-4">
+            <div className="mb-3 text-xs uppercase tracking-[0.18em] text-zinc-200">Page body</div>
+            <textarea
+              value={(task.extraProperties || {}).Body || ''}
+              onChange={(e) =>
+                onPatch(task.id, {
+                  extraProperties: {
+                    ...(task.extraProperties || {}),
+                    Body: e.target.value,
+                  },
+                })
+              }
+              placeholder="Body content, notes, checklist details, and summary of the page…"
+              className="min-h-[160px] w-full resize-none rounded-2xl border border-zinc-700 bg-zinc-900 px-4 py-3 text-sm leading-6 text-zinc-50 outline-none placeholder:text-zinc-400"
+            />
+            <div className="mt-2 text-xs text-zinc-100">
+              In production, this area should render the Notion page body content and optionally support lightweight editing for supported block types.
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-zinc-700 bg-zinc-800/70 p-4">
+            <div className="mb-3 text-xs uppercase tracking-[0.18em] text-zinc-200">Additional properties</div>
+            <div className="space-y-3">
+              {Object.entries(task.extraProperties || {}).filter(([key]) => key !== 'Body').length === 0 ? (
+                <div className="text-sm text-zinc-100">This is where dynamic page properties from Notion would render.</div>
+              ) : (
+                Object.entries(task.extraProperties || {})
+                  .filter(([key]) => key !== 'Body')
+                  .map(([key, value]) => (
+                    <PropertyRow key={key} label={key}>
+                      <input
+                        value={value}
+                        onChange={(e) =>
+                          onPatch(task.id, {
+                            extraProperties: {
+                              ...(task.extraProperties || {}),
+                              [key]: e.target.value,
+                            },
+                          })
+                        }
+                        className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-50 outline-none"
+                      />
+                    </PropertyRow>
+                  ))
+              )}
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-zinc-700 bg-zinc-800/70 p-4 text-sm text-zinc-100">
+            <div>Created {new Date(task.createdTime).toLocaleString()}</div>
+            <div className="mt-1">Last edited {new Date(task.lastEditedTime).toLocaleString()}</div>
+            <div className="mt-3 text-zinc-50">Open in Notion to view comments, full block content, mentions, and page history.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PropertyRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="mb-1 text-xs uppercase tracking-[0.18em] text-zinc-200">{label}</div>
+      {children}
+    </div>
+  );
+}
+
+function EmptyState({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <div className="rounded-3xl border border-dashed border-zinc-700 px-4 py-8 text-center">
+      <div className="text-sm font-medium text-zinc-50">{title}</div>
+      <div className="mt-1 text-sm text-zinc-100">{subtitle}</div>
+    </div>
+  );
+}
+
+function sortTasks(tasks: TaskItem[]) {
+  return [...tasks].sort((a, b) => {
+    const aInbox = a.databaseId ? 0 : 1;
+    const bInbox = b.databaseId ? 0 : 1;
+    if (aInbox !== bInbox) return aInbox - bInbox;
+    const dueA = a.due || '9999-12-31';
+    const dueB = b.due || '9999-12-31';
+    if (dueA !== dueB) return dueA.localeCompare(dueB);
+    return b.lastEditedTime.localeCompare(a.lastEditedTime);
+  });
+}
