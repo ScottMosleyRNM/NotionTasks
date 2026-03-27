@@ -1,3 +1,5 @@
+import "./globals.css";
+
 export const metadata = {
   title: "Notion Tasks",
   description: "Unified Notion task hub",
@@ -10,15 +12,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body
-        style={{
-          margin: 0,
-          background: "#111827",
-          color: "#f9fafb",
-          fontFamily:
-            'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-        }}
-      >
+      <body className="bg-zinc-900 text-zinc-50 antialiased" style={{ margin: 0 }}>
         {children}
       </body>
     </html>

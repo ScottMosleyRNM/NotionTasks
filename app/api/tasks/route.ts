@@ -1,5 +1,5 @@
 import { notion } from "@/lib/notion";
-import { DATABASE_IDS, getDatabaseLabels } from "@/lib/config";
+import { DATABASE_IDS, INBOX_DB, getDatabaseLabels } from "@/lib/config";
 import { NextResponse } from "next/server";
 
 function richTextToPlain(arr: any[] | undefined) {
@@ -70,6 +70,7 @@ export async function GET() {
           assignee: getAssignee(props),
           databaseId: dbId,
           database: labels[dbId] || dbId.slice(0, 6),
+          isInbox: dbId === INBOX_DB,
           url: safePage.url,
           createdTime: safePage.created_time,
           lastEditedTime: safePage.last_edited_time,
@@ -88,4 +89,75 @@ export async function GET() {
   });
 
   return NextResponse.json(results);
+}
+
+export async function POST(req: Request) {
+  try {
+    const body = await req.json();
+    const { title, databaseId, status } = body as {
+      title: string;
+      databaseId: string;
+      status?: string;
+    };
+
+    if (!title || !databaseId) {
+      return NextResponse.json({ error: "title and databaseId are required" }, { status: 400 });
+    }
+
+    // Retrieve DB schema to find the title property key and status type
+    const db = await notion.databases.retrieve({ database_id: databaseId }) as any;
+    const dbProps = db.properties || {};
+
+    // Build properties object
+    const properties: Record<string, any> = {};
+
+    // Set title
+    for (const [key, prop] of Object.entries(dbProps)) {
+      if ((prop as any).type === "title") {
+        properties[key] = { title: [{ text: { content: title } }] };
+        break;
+      }
+    }
+
+    // Set status if provided
+    if (status) {
+      if (dbProps["Status"]?.type === "status") {
+        properties["Status"] = { status: { name: status } };
+      } else if (dbProps["Status"]?.type === "select") {
+        properties["Status"] = { select: { name: status } };
+      } else {
+        for (const [key, prop] of Object.entries(dbProps)) {
+          if ((prop as any).type === "status") {
+            properties[key] = { status: { name: status } };
+            break;
+          }
+          if ((prop as any).type === "select") {
+            properties[key] = { select: { name: status } };
+            break;
+          }
+        }
+      }
+    }
+
+    const page = await notion.pages.create({
+      parent: { database_id: databaseId },
+      properties,
+    }) as any;
+
+    const labels = getDatabaseLabels();
+    return NextResponse.json({
+      id: page.id,
+      title,
+      status: status || "Unknown",
+      databaseId,
+      database: labels[databaseId] || databaseId.slice(0, 6),
+      isInbox: databaseId === INBOX_DB,
+      url: page.url,
+      createdTime: page.created_time,
+      lastEditedTime: page.last_edited_time,
+    });
+  } catch (error) {
+    console.error("POST task error", error);
+    return NextResponse.json({ error: "Failed to create task" }, { status: 500 });
+  }
 }
