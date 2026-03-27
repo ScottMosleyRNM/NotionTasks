@@ -1,5 +1,5 @@
 import { notion } from "@/lib/notion";
-import { DATABASE_IDS, INBOX_DB, getDatabaseLabels } from "@/lib/config";
+import { DATABASE_IDS, INBOX_DB, DEFAULT_ASSIGNEE, getDatabaseLabels } from "@/lib/config";
 import { NextResponse } from "next/server";
 
 function richTextToPlain(arr: any[] | undefined) {
