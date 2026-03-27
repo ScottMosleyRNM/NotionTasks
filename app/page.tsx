@@ -52,8 +52,13 @@ type TaskDetail = {
 // Helpers
 // ---------------------------------------------------------------------------
 
+function isValidDate(date: string) {
+  const d = new Date(`${date}T00:00:00`);
+  return !isNaN(d.getTime());
+}
+
 function formatDate(date?: string) {
-  if (!date) return "No due date";
+  if (!date) return "";
   return new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
@@ -257,16 +262,44 @@ export default function Home() {
           </div>
 
           {showConfig && (
-            <div className="mt-3 rounded-2xl border border-zinc-700 bg-zinc-800/70 p-3 text-sm text-zinc-300">
-              <div className="mb-1 font-medium text-zinc-100">Connection model</div>
-              <p className="leading-5">
-                Reads from all databases in{" "}
-                <code className="rounded bg-zinc-700 px-1 text-xs">NOTION_DATABASE_ALLOWLIST</code>.
-                The inbox database is controlled by{" "}
-                <code className="rounded bg-zinc-700 px-1 text-xs">NOTION_INBOX_DATABASE_ID</code>.
-                Database display names are set via{" "}
-                <code className="rounded bg-zinc-700 px-1 text-xs">NOTION_DATABASE_LABELS_JSON</code>.
-              </p>
+            <div className="mt-3 rounded-2xl border border-zinc-700 bg-zinc-800/70 p-3 text-sm">
+              <div className="mb-2 font-medium text-zinc-100">Settings</div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-300">Hide completed tasks</span>
+                  <button
+                    onClick={() => setHideDone((v) => !v)}
+                    className={`relative h-5 w-9 rounded-full transition-colors ${hideDone ? "bg-sky-400" : "bg-zinc-600"}`}
+                  >
+                    <span
+                      className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${hideDone ? "translate-x-4" : "translate-x-0.5"}`}
+                    />
+                  </button>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-300">Refresh tasks</span>
+                  <button
+                    onClick={() => {
+                      setTasksLoading(true);
+                      setDbsLoading(true);
+                      fetch("/api/tasks")
+                        .then((r) => r.json())
+                        .then((data) => setTasks(Array.isArray(data) ? data : []))
+                        .catch(() => {})
+                        .finally(() => setTasksLoading(false));
+                      fetch("/api/databases")
+                        .then((r) => r.json())
+                        .then((data: TaskDatabase[]) => setDatabases(Array.isArray(data) ? data : []))
+                        .catch(() => {})
+                        .finally(() => setDbsLoading(false));
+                      setShowConfig(false);
+                    }}
+                    className="rounded-full border border-zinc-600 px-3 py-1 text-xs text-zinc-200 transition hover:bg-zinc-700"
+                  >
+                    Refresh
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
@@ -582,14 +615,14 @@ function TaskRow({ task, onClick }: { task: Task; onClick: () => void }) {
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium text-zinc-50">{task.title}</div>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            {task.due && (
+            <span className={`rounded-full border px-2 py-0.5 text-xs ${statusTone(task.status)}`}>
+              {task.status}
+            </span>
+            {task.due && isValidDate(task.due) && (
               <span className="rounded-full border border-zinc-600 px-2 py-0.5 text-xs text-zinc-300">
                 {formatDate(task.due)}
               </span>
             )}
-            <span className={`rounded-full border px-2 py-0.5 text-xs ${statusTone(task.status)}`}>
-              {task.status}
-            </span>
             <span className="inline-flex items-center gap-1 rounded-full border border-zinc-700 px-2 py-0.5 text-xs text-zinc-400">
               <NotionIcon icon={task.databaseIcon} size="sm" />
               {task.database}
