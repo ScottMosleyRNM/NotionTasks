@@ -220,6 +220,8 @@ export default function Home() {
       databaseId: composeDb,
       database: db?.name || composeDb.slice(0, 6),
       isInbox: db?.isInbox ?? false,
+      isAssignedToMe: true,
+      isCreatedByMe: true,
       url: "",
       createdTime: new Date().toISOString(),
       lastEditedTime: new Date().toISOString(),
