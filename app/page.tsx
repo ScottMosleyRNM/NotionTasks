@@ -115,6 +115,15 @@ export default function Home() {
   const mainRef = useRef<HTMLDivElement>(null);
   const touchStartY = useRef(0);
 
+  function defaultInboxId(dbs: TaskDatabase[]): string {
+    return (
+      dbs.find((d) => d.isInbox)?.id ||
+      dbs.find((d) => d.name.toLowerCase().includes("inbox"))?.id ||
+      dbs[0]?.id ||
+      ""
+    );
+  }
+
   function doRefresh(showSpinner = false) {
     if (showSpinner) setIsRefreshing(true);
     const t = fetch("/api/tasks")
@@ -133,8 +142,7 @@ export default function Home() {
         if (Array.isArray(data)) {
           setDatabases(data);
           try { localStorage.setItem("notion-dbs-cache", JSON.stringify(data)); } catch {}
-          const inbox = data.find((db) => db.isInbox);
-          setComposeDb((prev) => prev || inbox?.id || data[0]?.id || "");
+          setComposeDb(defaultInboxId(data));
         }
       })
       .catch(() => {})
@@ -157,8 +165,7 @@ export default function Home() {
         const parsed: TaskDatabase[] = JSON.parse(cachedDbs);
         if (Array.isArray(parsed)) {
           setDatabases(parsed);
-          const inbox = parsed.find((d) => d.isInbox);
-          setComposeDb(inbox?.id || parsed[0]?.id || "");
+          setComposeDb(defaultInboxId(parsed));
           setDbsLoading(false);
         }
       }
@@ -344,7 +351,8 @@ export default function Home() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search tasks…"
-                className="w-full bg-transparent text-sm text-zinc-50 outline-none placeholder:text-zinc-500"
+                style={{ fontSize: "16px" }}
+                className="w-full bg-transparent text-zinc-50 outline-none placeholder:text-zinc-500"
               />
               {query && (
                 <button onClick={() => setQuery("")} className="shrink-0 text-zinc-500 hover:text-zinc-300">
@@ -552,7 +560,7 @@ function TaskRow({ task, view, onClick }: { task: Task; view: AppView; onClick: 
               </span>
             )}
             <span className="inline-flex items-center gap-1 rounded-full border border-zinc-700 px-2 py-0.5 text-xs text-zinc-400">
-              <NotionIcon icon={task.databaseIcon} size="sm" />
+              <NotionIcon icon={task.databaseIcon} fallback={getDbFallbackIcon(task.database)} size="sm" />
               {task.database}
             </span>
             {view === "assigned" && task.otherAssignees.length > 0 && (
@@ -599,14 +607,11 @@ function ComposeSheet({
       onClick={onClose}
     >
       <div
-        className="absolute inset-x-0 bottom-0 rounded-t-3xl border-t border-zinc-700 bg-zinc-900 p-4 shadow-2xl"
+        className="absolute inset-x-0 bottom-0 rounded-t-3xl border-t border-zinc-700 bg-zinc-900 px-4 pb-10 pt-4 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-zinc-700" />
-        <div className="mb-0.5 text-lg font-semibold text-zinc-50">New task</div>
-        <div className="mb-4 text-sm text-zinc-400">
-          Capture quickly — route to a database or save to inbox.
-        </div>
+        <div className="mb-4 text-lg font-semibold text-zinc-50">New task</div>
         <div className="space-y-3">
           <input
             ref={inputRef}
@@ -614,22 +619,25 @@ function ComposeSheet({
             onChange={(e) => setTitle(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && onSubmit()}
             placeholder="Task title"
-            className="w-full rounded-2xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-sm text-zinc-50 outline-none placeholder:text-zinc-500 focus:border-zinc-500"
+            style={{ fontSize: "16px" }}
+            className="w-full rounded-2xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-zinc-50 outline-none placeholder:text-zinc-500 focus:border-zinc-500"
           />
-          <select
-            value={destination}
-            onChange={(e) => setDestination(e.target.value)}
-            className="w-full rounded-2xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-sm text-zinc-50 outline-none"
-          >
-            {databases.map((db) => (
-              <option key={db.id} value={db.id} className="bg-zinc-900">
-                {db.icon && !db.icon.startsWith("http") ? db.icon : db.isInbox ? "📥" : "🗂️"}{" "}
-                {db.name}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <select
+              value={destination}
+              onChange={(e) => setDestination(e.target.value)}
+              className="w-full appearance-none rounded-2xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-sm text-zinc-50 outline-none"
+            >
+              {databases.map((db) => (
+                <option key={db.id} value={db.id} className="bg-zinc-900">
+                  {getDbFallbackIcon(db.name)} {db.name}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+          </div>
         </div>
-        <div className="mt-4 flex gap-2">
+        <div className="mt-4 flex gap-3">
           <button
             onClick={onClose}
             className="flex-1 rounded-2xl border border-zinc-700 px-4 py-3 text-sm text-zinc-300 transition hover:bg-zinc-800"
@@ -733,7 +741,7 @@ function TaskDetailSheet({
         </div>
 
         {/* Scrollable body */}
-        <div className="h-full overflow-y-auto px-4 pb-12 pt-4">
+        <div className="h-full overflow-x-hidden overflow-y-auto px-4 pb-12 pt-4">
 
           {/* Editable title */}
           <div className="rounded-2xl border border-zinc-700 bg-zinc-800/70 px-4 py-3">
@@ -759,7 +767,7 @@ function TaskDetailSheet({
           <div className="mt-3 space-y-3 rounded-2xl border border-zinc-700 bg-zinc-800/70 p-4">
             <PropertyRow label="Database">
               <span className="inline-flex items-center gap-1.5 text-sm text-zinc-300">
-                <NotionIcon icon={task.databaseIcon} size="sm" />
+                <NotionIcon icon={task.databaseIcon} fallback={getDbFallbackIcon(task.database)} size="sm" />
                 {task.database}
               </span>
             </PropertyRow>
@@ -770,7 +778,7 @@ function TaskDetailSheet({
                   <select
                     value={editStatus}
                     onChange={(e) => handleStatusChange(e.target.value)}
-                    className="w-full appearance-none rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 pr-8 text-sm text-zinc-50 outline-none"
+                    className="w-full appearance-none rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2.5 pr-8 text-sm text-zinc-50 outline-none"
                   >
                     {statuses.map((s) => (
                       <option key={s} value={s} className="bg-zinc-900">
@@ -884,14 +892,24 @@ function LoadingState() {
   );
 }
 
+// Emoji fallback icons keyed by database name patterns
+function getDbFallbackIcon(name: string): string {
+  const n = name.toLowerCase();
+  if (n.includes("elt") || n.includes("leader")) return "👥";
+  if (n.includes("discuss")) return "💬";
+  if (n.includes("inbox")) return "📥";
+  return "✅";
+}
+
 // Renders a Notion icon — either an emoji or an external image URL
-function NotionIcon({ icon, size = "sm" }: { icon?: string; size?: "sm" | "md" }) {
-  if (!icon) return null;
+function NotionIcon({ icon, fallback, size = "sm" }: { icon?: string; fallback?: string; size?: "sm" | "md" }) {
+  const display = icon || fallback;
+  if (!display) return null;
   const dim = size === "md" ? "h-4 w-4" : "h-3 w-3";
-  if (icon.startsWith("http")) {
-    return <img src={icon} alt="" className={`${dim} rounded-sm object-cover`} />;
+  if (display.startsWith("http")) {
+    return <img src={display} alt="" className={`${dim} rounded-sm object-cover`} />;
   }
-  return <span className={size === "md" ? "text-sm" : "text-xs"}>{icon}</span>;
+  return <span className={size === "md" ? "text-sm" : "text-xs"}>{display}</span>;
 }
 
 // Display-only property value extractor (for the "All properties" section)
