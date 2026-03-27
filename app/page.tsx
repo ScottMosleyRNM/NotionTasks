@@ -4,10 +4,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   ExternalLink,
-  FolderTree,
   Inbox,
   ListChecks,
   Search,
+  Send,
   Settings2,
   X,
 } from "lucide-react";
@@ -16,7 +16,7 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 
-type AppView = "tasks" | "inbox" | "databases";
+type AppView = "assigned" | "delegated" | "inbox";
 
 type Task = {
   id: string;
@@ -29,6 +29,8 @@ type Task = {
   databaseIcon?: string;
   pageIcon?: string;
   isInbox: boolean;
+  isAssignedToMe: boolean;
+  isCreatedByMe: boolean;
   url: string;
   createdTime: string;
   lastEditedTime: string;
@@ -96,7 +98,7 @@ function sortTasks(tasks: Task[]) {
 export default function Home() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [databases, setDatabases] = useState<TaskDatabase[]>([]);
-  const [view, setView] = useState<AppView>("tasks");
+  const [view, setView] = useState<AppView>("assigned");
   const [query, setQuery] = useState("");
   const [selectedDbId, setSelectedDbId] = useState<"all" | string>("all");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -136,15 +138,26 @@ export default function Home() {
     [tasks]
   );
 
+  // Tasks assigned to me (excluding inbox DB)
   const assignedTasks = useMemo(
-    () => sortTasks(tasks.filter((t) => !t.isInbox)),
+    () => sortTasks(tasks.filter((t) => !t.isInbox && t.isAssignedToMe)),
+    [tasks]
+  );
+
+  // Tasks I created but are assigned to someone else (or unassigned) — excluding inbox DB
+  const delegatedTasks = useMemo(
+    () => sortTasks(tasks.filter((t) => !t.isInbox && t.isCreatedByMe && !t.isAssignedToMe)),
     [tasks]
   );
 
   const visibleTasks = useMemo(() => {
-    let base = view === "inbox" ? inboxTasks : assignedTasks;
-    // Hide done/complete tasks by default on the Tasks tab
-    if (view === "tasks" && hideDone) {
+    let base =
+      view === "inbox" ? inboxTasks :
+      view === "delegated" ? delegatedTasks :
+      assignedTasks;
+
+    // Hide done/complete tasks by default on Assigned tab
+    if (view === "assigned" && hideDone) {
       base = base.filter((t) => {
         const s = t.status.toLowerCase();
         return !s.includes("done") && !s.includes("complete");
@@ -163,7 +176,7 @@ export default function Home() {
         .toLowerCase()
         .includes(q)
     );
-  }, [tasks, view, selectedDbId, query, hideDone, inboxTasks, assignedTasks]);
+  }, [tasks, view, selectedDbId, query, hideDone, inboxTasks, assignedTasks, delegatedTasks]);
 
   const nonInboxDbs = useMemo(
     () => databases.filter((d) => !d.isInbox),
@@ -305,13 +318,13 @@ export default function Home() {
 
           {/* Nav tabs */}
           <div className="mt-3 grid grid-cols-3 gap-1.5 rounded-2xl bg-zinc-800 p-1">
-            <NavTab active={view === "tasks"} onClick={() => { setView("tasks"); setSelectedDbId("all"); }} icon={ListChecks} label="Tasks" />
-            <NavTab active={view === "inbox"} onClick={() => { setView("inbox"); setSelectedDbId("all"); }} icon={Inbox} label="Inbox" />
-            <NavTab active={view === "databases"} onClick={() => setView("databases")} icon={FolderTree} label="DBs" />
+            <NavTab active={view === "assigned"}   onClick={() => { setView("assigned");   setSelectedDbId("all"); }} icon={ListChecks} label="Assigned" />
+            <NavTab active={view === "delegated"}  onClick={() => { setView("delegated");  setSelectedDbId("all"); }} icon={Send}       label="Delegated" />
+            <NavTab active={view === "inbox"}      onClick={() => { setView("inbox");      setSelectedDbId("all"); }} icon={Inbox}      label="Inbox" />
           </div>
 
-          {/* Search + Add */}
-          {view !== "databases" && (
+          {/* Search + Add — shown on all tabs */}
+          {(
             <div className="mt-3 flex gap-2">
               <div className="flex flex-1 items-center gap-2 rounded-2xl border border-zinc-700 bg-zinc-800 px-3 py-2.5">
                 <Search className="h-4 w-4 shrink-0 text-zinc-400" />
@@ -343,22 +356,20 @@ export default function Home() {
             <LoadingState />
           ) : (
             <>
-              {/* DB filter chips — shown on tasks + inbox views */}
-              {view !== "databases" && (
-                <DatabaseFilter
-                  selected={selectedDbId}
-                  databases={view === "inbox" ? inboxDbs : nonInboxDbs}
-                  onChange={setSelectedDbId}
-                />
-              )}
+              {/* DB filter chips */}
+              <DatabaseFilter
+                selected={selectedDbId}
+                databases={view === "inbox" ? inboxDbs : nonInboxDbs}
+                onChange={setSelectedDbId}
+              />
 
-              {/* Tasks view */}
-              {view === "tasks" && (
+              {/* Assigned view */}
+              {view === "assigned" && (
                 <section className="space-y-3">
                   <div className="mb-1 flex items-center justify-between gap-2">
                     <SectionHeader
-                      title="All tasks"
-                      subtitle={`${visibleTasks.length} task${visibleTasks.length !== 1 ? "s" : ""} across ${nonInboxDbs.length} database${nonInboxDbs.length !== 1 ? "s" : ""}`}
+                      title="Assigned to me"
+                      subtitle={`${visibleTasks.length} task${visibleTasks.length !== 1 ? "s" : ""}`}
                     />
                     <button
                       onClick={() => setHideDone((v) => !v)}
@@ -370,15 +381,31 @@ export default function Home() {
                   {visibleTasks.length === 0 ? (
                     <EmptyState
                       title="No tasks found"
-                      subtitle={query ? "Try a different search term." : "All caught up!"}
+                      subtitle={query ? "Try a different search term." : "Nothing assigned to you right now."}
                     />
                   ) : (
                     visibleTasks.map((task) => (
-                      <TaskRow
-                        key={task.id}
-                        task={task}
-                        onClick={() => setSelectedTaskId(task.id)}
-                      />
+                      <TaskRow key={task.id} task={task} onClick={() => setSelectedTaskId(task.id)} />
+                    ))
+                  )}
+                </section>
+              )}
+
+              {/* Delegated view */}
+              {view === "delegated" && (
+                <section className="space-y-3">
+                  <SectionHeader
+                    title="Delegated"
+                    subtitle={`${visibleTasks.length} task${visibleTasks.length !== 1 ? "s" : ""} you created, assigned to others`}
+                  />
+                  {visibleTasks.length === 0 ? (
+                    <EmptyState
+                      title="Nothing delegated"
+                      subtitle={query ? "Try a different search term." : "No tasks you created are assigned to others."}
+                    />
+                  ) : (
+                    visibleTasks.map((task) => (
+                      <TaskRow key={task.id} task={task} onClick={() => setSelectedTaskId(task.id)} />
                     ))
                   )}
                 </section>
@@ -398,80 +425,8 @@ export default function Home() {
                     />
                   ) : (
                     visibleTasks.map((task) => (
-                      <TaskRow
-                        key={task.id}
-                        task={task}
-                        onClick={() => setSelectedTaskId(task.id)}
-                      />
+                      <TaskRow key={task.id} task={task} onClick={() => setSelectedTaskId(task.id)} />
                     ))
-                  )}
-                </section>
-              )}
-
-              {/* Databases view */}
-              {view === "databases" && (
-                <section className="space-y-3">
-                  <SectionHeader
-                    title="Task databases"
-                    subtitle="Sources feeding the unified task list"
-                  />
-                  {databases.length === 0 ? (
-                    <EmptyState
-                      title="No databases configured"
-                      subtitle="Set NOTION_DATABASE_ALLOWLIST in your environment."
-                    />
-                  ) : (
-                    databases.map((db) => {
-                      const count = tasks.filter((t) => t.databaseId === db.id).length;
-                      return (
-                        <div
-                          key={db.id}
-                          className="rounded-2xl border border-zinc-700 bg-zinc-800/70 p-4"
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5 text-sm font-medium text-zinc-50">
-                                {db.icon ? (
-                                  <NotionIcon icon={db.icon} size="md" />
-                                ) : (
-                                  <span>{db.isInbox ? "📥" : "🗂️"}</span>
-                                )}
-                                <span>{db.name}</span>
-                                {db.isInbox && (
-                                  <span className="ml-2 rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-300">
-                                    Inbox
-                                  </span>
-                                )}
-                              </div>
-                              <div className="mt-1 text-xs text-zinc-400">
-                                {count} task{count !== 1 ? "s" : ""}
-                              </div>
-                            </div>
-                            <button
-                              onClick={() => {
-                                setSelectedDbId(db.id);
-                                setView(db.isInbox ? "inbox" : "tasks");
-                              }}
-                              className="rounded-xl border border-zinc-600 px-3 py-2 text-sm text-zinc-200 transition hover:bg-zinc-700"
-                            >
-                              View
-                            </button>
-                          </div>
-                          {db.statuses.length > 0 && (
-                            <div className="mt-3 flex flex-wrap gap-1.5">
-                              {db.statuses.map((status) => (
-                                <span
-                                  key={status}
-                                  className={`rounded-full border px-2 py-0.5 text-xs ${statusTone(status)}`}
-                                >
-                                  {status}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })
                   )}
                 </section>
               )}
@@ -484,6 +439,8 @@ export default function Home() {
           <div className="flex items-center justify-between rounded-2xl bg-zinc-800 px-4 py-3 text-sm text-zinc-400">
             <div>
               <span className="text-zinc-200">{assignedTasks.length}</span> assigned
+              {" · "}
+              <span className="text-zinc-200">{delegatedTasks.length}</span> delegated
               {" · "}
               <span className="text-zinc-200">{inboxTasks.length}</span> inbox
             </div>

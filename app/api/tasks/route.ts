@@ -47,6 +47,20 @@ function getAssignee(props: any) {
   return undefined;
 }
 
+function isAssignedToUser(props: any, userId: string): boolean {
+  if (!userId) return false;
+  if (props?.["Assignee"]?.people) {
+    return props["Assignee"].people.some((p: any) => p.id === userId);
+  }
+  for (const key of Object.keys(props || {})) {
+    const prop = props[key];
+    if (prop?.type === "people" && Array.isArray(prop.people)) {
+      return prop.people.some((p: any) => p.id === userId);
+    }
+  }
+  return false;
+}
+
 function extractIcon(icon: any): string | undefined {
   if (!icon) return undefined;
   if (icon.type === "emoji") return icon.emoji;
@@ -57,6 +71,7 @@ function extractIcon(icon: any): string | undefined {
 
 export async function GET() {
   const labels = getDatabaseLabels();
+  const myUserId = DEFAULT_ASSIGNEE; // may be empty string if not configured
   const results: any[] = [];
 
   // Pre-fetch DB metadata (real name + icon) in parallel before querying tasks
@@ -99,6 +114,8 @@ export async function GET() {
           databaseIcon: dbMeta[dbId]?.icon,
           pageIcon: extractIcon(safePage.icon),
           isInbox: dbId === INBOX_DB,
+          isAssignedToMe: myUserId ? isAssignedToUser(props, myUserId) : true,
+          isCreatedByMe: myUserId ? safePage.created_by?.id === myUserId : false,
           url: safePage.url,
           createdTime: safePage.created_time,
           lastEditedTime: safePage.last_edited_time,
