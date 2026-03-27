@@ -26,6 +26,8 @@ type Task = {
   assignee?: string;
   databaseId: string;
   database: string;
+  databaseIcon?: string;
+  pageIcon?: string;
   isInbox: boolean;
   url: string;
   createdTime: string;
@@ -35,6 +37,7 @@ type Task = {
 type TaskDatabase = {
   id: string;
   name: string;
+  icon?: string;
   statuses: string[];
   isInbox: boolean;
 };
@@ -96,6 +99,7 @@ export default function Home() {
   const [composeTitle, setComposeTitle] = useState("");
   const [composeDb, setComposeDb] = useState<string>("");
   const [showConfig, setShowConfig] = useState(false);
+  const [hideDone, setHideDone] = useState(true);
   const [tasksLoading, setTasksLoading] = useState(true);
   const [dbsLoading, setDbsLoading] = useState(true);
 
@@ -133,7 +137,14 @@ export default function Home() {
   );
 
   const visibleTasks = useMemo(() => {
-    const base = view === "inbox" ? inboxTasks : assignedTasks;
+    let base = view === "inbox" ? inboxTasks : assignedTasks;
+    // Hide done/complete tasks by default on the Tasks tab
+    if (view === "tasks" && hideDone) {
+      base = base.filter((t) => {
+        const s = t.status.toLowerCase();
+        return !s.includes("done") && !s.includes("complete");
+      });
+    }
     const filtered =
       selectedDbId === "all"
         ? base
@@ -147,7 +158,7 @@ export default function Home() {
         .toLowerCase()
         .includes(q)
     );
-  }, [tasks, view, selectedDbId, query, inboxTasks, assignedTasks]);
+  }, [tasks, view, selectedDbId, query, hideDone, inboxTasks, assignedTasks]);
 
   const nonInboxDbs = useMemo(
     () => databases.filter((d) => !d.isInbox),
@@ -311,10 +322,18 @@ export default function Home() {
               {/* Tasks view */}
               {view === "tasks" && (
                 <section className="space-y-3">
-                  <SectionHeader
-                    title="All tasks"
-                    subtitle={`${visibleTasks.length} task${visibleTasks.length !== 1 ? "s" : ""} across ${nonInboxDbs.length} database${nonInboxDbs.length !== 1 ? "s" : ""}`}
-                  />
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <SectionHeader
+                      title="All tasks"
+                      subtitle={`${visibleTasks.length} task${visibleTasks.length !== 1 ? "s" : ""} across ${nonInboxDbs.length} database${nonInboxDbs.length !== 1 ? "s" : ""}`}
+                    />
+                    <button
+                      onClick={() => setHideDone((v) => !v)}
+                      className="shrink-0 rounded-full border border-zinc-700 px-2.5 py-1 text-xs text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200"
+                    >
+                      {hideDone ? "Show done" : "Hide done"}
+                    </button>
+                  </div>
                   {visibleTasks.length === 0 ? (
                     <EmptyState
                       title="No tasks found"
@@ -378,9 +397,13 @@ export default function Home() {
                         >
                           <div className="flex items-center justify-between gap-3">
                             <div className="min-w-0">
-                              <div className="text-sm font-medium text-zinc-50">
-                                {db.isInbox ? "📥 " : "🗂️ "}
-                                {db.name}
+                              <div className="flex items-center gap-1.5 text-sm font-medium text-zinc-50">
+                                {db.icon ? (
+                                  <NotionIcon icon={db.icon} size="md" />
+                                ) : (
+                                  <span>{db.isInbox ? "📥" : "🗂️"}</span>
+                                )}
+                                <span>{db.name}</span>
                                 {db.isInbox && (
                                   <span className="ml-2 rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-300">
                                     Inbox
@@ -567,7 +590,8 @@ function TaskRow({ task, onClick }: { task: Task; onClick: () => void }) {
             <span className={`rounded-full border px-2 py-0.5 text-xs ${statusTone(task.status)}`}>
               {task.status}
             </span>
-            <span className="rounded-full border border-zinc-700 px-2 py-0.5 text-xs text-zinc-400">
+            <span className="inline-flex items-center gap-1 rounded-full border border-zinc-700 px-2 py-0.5 text-xs text-zinc-400">
+              <NotionIcon icon={task.databaseIcon} size="sm" />
               {task.database}
             </span>
             {task.assignee && (
@@ -633,7 +657,7 @@ function ComposeSheet({
           >
             {databases.map((db) => (
               <option key={db.id} value={db.id} className="bg-zinc-900">
-                {db.isInbox ? "📥 " : "🗂️ "}
+                {db.icon && !db.icon.startsWith("http") ? db.icon : db.isInbox ? "📥" : "🗂️"}{" "}
                 {db.name}
               </option>
             ))}
@@ -886,6 +910,16 @@ function LoadingState() {
       ))}
     </div>
   );
+}
+
+// Renders a Notion icon — either an emoji or an external image URL
+function NotionIcon({ icon, size = "sm" }: { icon?: string; size?: "sm" | "md" }) {
+  if (!icon) return null;
+  const dim = size === "md" ? "h-4 w-4" : "h-3 w-3";
+  if (icon.startsWith("http")) {
+    return <img src={icon} alt="" className={`${dim} rounded-sm object-cover`} />;
+  }
+  return <span className={size === "md" ? "text-sm" : "text-xs"}>{icon}</span>;
 }
 
 // Display-only property value extractor (for the "All properties" section)

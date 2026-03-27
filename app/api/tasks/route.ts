@@ -47,9 +47,35 @@ function getAssignee(props: any) {
   return undefined;
 }
 
+function extractIcon(icon: any): string | undefined {
+  if (!icon) return undefined;
+  if (icon.type === "emoji") return icon.emoji;
+  if (icon.type === "external") return icon.external?.url;
+  // Skip "file" type — those URLs have expiry times
+  return undefined;
+}
+
 export async function GET() {
   const labels = getDatabaseLabels();
   const results: any[] = [];
+
+  // Pre-fetch DB metadata (real name + icon) in parallel before querying tasks
+  const dbMeta: Record<string, { name: string; icon?: string }> = {};
+  await Promise.all(
+    DATABASE_IDS.map(async (dbId) => {
+      try {
+        const db = await notion.databases.retrieve({ database_id: dbId }) as any;
+        const notionTitle =
+          (db.title || []).map((t: any) => t.plain_text).join("") || dbId.slice(0, 6);
+        dbMeta[dbId] = {
+          name: labels[dbId] || notionTitle,
+          icon: extractIcon(db.icon),
+        };
+      } catch {
+        dbMeta[dbId] = { name: labels[dbId] || dbId.slice(0, 6) };
+      }
+    })
+  );
 
   for (const dbId of DATABASE_IDS) {
     try {
@@ -69,7 +95,9 @@ export async function GET() {
           status: getStatus(props),
           assignee: getAssignee(props),
           databaseId: dbId,
-          database: labels[dbId] || dbId.slice(0, 6),
+          database: dbMeta[dbId]?.name ?? dbId.slice(0, 6),
+          databaseIcon: dbMeta[dbId]?.icon,
+          pageIcon: extractIcon(safePage.icon),
           isInbox: dbId === INBOX_DB,
           url: safePage.url,
           createdTime: safePage.created_time,
@@ -145,12 +173,14 @@ export async function POST(req: Request) {
     }) as any;
 
     const labels = getDatabaseLabels();
+    const dbTitle = (db.title || []).map((t: any) => t.plain_text).join("") || databaseId.slice(0, 6);
     return NextResponse.json({
       id: page.id,
       title,
       status: status || "Unknown",
       databaseId,
-      database: labels[databaseId] || databaseId.slice(0, 6),
+      database: labels[databaseId] || dbTitle,
+      databaseIcon: extractIcon(db.icon),
       isInbox: databaseId === INBOX_DB,
       url: page.url,
       createdTime: page.created_time,

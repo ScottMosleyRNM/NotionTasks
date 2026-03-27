@@ -2,11 +2,19 @@ import { notion } from "@/lib/notion";
 import { DATABASE_IDS, INBOX_DB, getDatabaseLabels } from "@/lib/config";
 import { NextResponse } from "next/server";
 
+function extractIcon(icon: any): string | undefined {
+  if (!icon) return undefined;
+  if (icon.type === "emoji") return icon.emoji;
+  if (icon.type === "external") return icon.external?.url;
+  return undefined;
+}
+
 export async function GET() {
   const labels = getDatabaseLabels();
   const databases: {
     id: string;
     name: string;
+    icon?: string;
     statuses: string[];
     isInbox: boolean;
   }[] = [];
@@ -46,6 +54,7 @@ export async function GET() {
       databases.push({
         id: dbId,
         name: labels[dbId] || notionTitle,
+        icon: extractIcon(db.icon),
         statuses,
         isInbox: dbId === INBOX_DB,
       });
