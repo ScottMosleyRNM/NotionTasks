@@ -171,7 +171,7 @@ export default function Home() {
     if (!query.trim()) return filtered;
     const q = query.toLowerCase();
     return filtered.filter((t) =>
-      [t.title, t.status, t.database, t.assignee]
+      [t.title, t.status, t.database, ...t.otherAssignees]
         .filter(Boolean)
         .join(" ")
         .toLowerCase()
