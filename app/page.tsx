@@ -3,12 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
+  ChevronDown,
   ExternalLink,
   Inbox,
   ListChecks,
+  Plus,
+  RefreshCw,
   Search,
   Send,
-  Settings2,
   X,
 } from "lucide-react";
 
@@ -101,35 +103,86 @@ export default function Home() {
   const [databases, setDatabases] = useState<TaskDatabase[]>([]);
   const [view, setView] = useState<AppView>("assigned");
   const [query, setQuery] = useState("");
+  const [showSearch, setShowSearch] = useState(false);
   const [selectedDbId, setSelectedDbId] = useState<"all" | string>("all");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeTitle, setComposeTitle] = useState("");
   const [composeDb, setComposeDb] = useState<string>("");
-  const [showConfig, setShowConfig] = useState(false);
-  const [hideDone, setHideDone] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [tasksLoading, setTasksLoading] = useState(true);
   const [dbsLoading, setDbsLoading] = useState(true);
+  const mainRef = useRef<HTMLDivElement>(null);
+  const touchStartY = useRef(0);
 
-  // Fetch tasks and databases in parallel on mount
-  useEffect(() => {
-    fetch("/api/tasks")
+  function doRefresh(showSpinner = false) {
+    if (showSpinner) setIsRefreshing(true);
+    const t = fetch("/api/tasks")
       .then((r) => r.json())
-      .then((data) => setTasks(Array.isArray(data) ? data : []))
-      .catch(() => setTasks([]))
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setTasks(data);
+          try { localStorage.setItem("notion-tasks-cache", JSON.stringify(data)); } catch {}
+        }
+      })
+      .catch(() => {})
       .finally(() => setTasksLoading(false));
-
-    fetch("/api/databases")
+    const d = fetch("/api/databases")
       .then((r) => r.json())
       .then((data: TaskDatabase[]) => {
-        setDatabases(Array.isArray(data) ? data : []);
-        // Default compose destination to inbox db if available, else first db
-        const inbox = data.find((d) => d.isInbox);
-        setComposeDb(inbox?.id || data[0]?.id || "");
+        if (Array.isArray(data)) {
+          setDatabases(data);
+          try { localStorage.setItem("notion-dbs-cache", JSON.stringify(data)); } catch {}
+          const inbox = data.find((db) => db.isInbox);
+          setComposeDb((prev) => prev || inbox?.id || data[0]?.id || "");
+        }
       })
-      .catch(() => setDatabases([]))
+      .catch(() => {})
       .finally(() => setDbsLoading(false));
-  }, []);
+    Promise.all([t, d]).finally(() => setIsRefreshing(false));
+  }
+
+  // On mount: load cache immediately, then fetch fresh data in background
+  useEffect(() => {
+    try {
+      const cachedTasks = localStorage.getItem("notion-tasks-cache");
+      if (cachedTasks) {
+        const parsed = JSON.parse(cachedTasks);
+        if (Array.isArray(parsed)) { setTasks(parsed); setTasksLoading(false); }
+      }
+    } catch {}
+    try {
+      const cachedDbs = localStorage.getItem("notion-dbs-cache");
+      if (cachedDbs) {
+        const parsed: TaskDatabase[] = JSON.parse(cachedDbs);
+        if (Array.isArray(parsed)) {
+          setDatabases(parsed);
+          const inbox = parsed.find((d) => d.isInbox);
+          setComposeDb(inbox?.id || parsed[0]?.id || "");
+          setDbsLoading(false);
+        }
+      }
+    } catch {}
+    doRefresh();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Pull-to-refresh touch handling
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    const onStart = (e: TouchEvent) => { touchStartY.current = e.touches[0].clientY; };
+    const onEnd = (e: TouchEvent) => {
+      if (el.scrollTop > 0) return;
+      const delta = e.changedTouches[0].clientY - touchStartY.current;
+      if (delta > 80) doRefresh(true);
+    };
+    el.addEventListener("touchstart", onStart, { passive: true });
+    el.addEventListener("touchend", onEnd, { passive: true });
+    return () => {
+      el.removeEventListener("touchstart", onStart);
+      el.removeEventListener("touchend", onEnd);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const inboxDbs = useMemo(() => databases.filter((d) => d.isInbox), [databases]);
   const inboxDbIds = useMemo(() => new Set(inboxDbs.map((d) => d.id)), [inboxDbs]);
@@ -157,8 +210,8 @@ export default function Home() {
       view === "delegated" ? delegatedTasks :
       assignedTasks;
 
-    // Hide done/complete tasks by default on Assigned tab
-    if (view === "assigned" && hideDone) {
+    // Always hide done/complete tasks on Assigned tab
+    if (view === "assigned") {
       base = base.filter((t) => {
         const s = t.status.toLowerCase();
         return !s.includes("done") && !s.includes("complete");
@@ -177,7 +230,7 @@ export default function Home() {
         .toLowerCase()
         .includes(q)
     );
-  }, [tasks, view, selectedDbId, query, hideDone, inboxTasks, assignedTasks, delegatedTasks]);
+  }, [tasks, view, selectedDbId, query, inboxTasks, assignedTasks, delegatedTasks]);
 
   const nonInboxDbs = useMemo(
     () => databases.filter((d) => !d.isInbox),
@@ -263,63 +316,17 @@ export default function Home() {
         {/* ── Header ── */}
         <header className="sticky top-0 z-20 border-b border-zinc-800 bg-zinc-900/95 px-4 pb-3 pt-5 backdrop-blur">
           <div className="flex items-center justify-between">
-            <div>
-              <div className="text-xs uppercase tracking-[0.22em] text-zinc-400">
-                Unified Tasks
-              </div>
-              <div className="mt-0.5 text-lg font-semibold text-zinc-50">
-                Notion task hub
-              </div>
+            <div className="text-lg font-semibold text-zinc-50">Notion Tasks</div>
+            <div className="flex items-center gap-1">
+              {isRefreshing && <RefreshCw className="h-4 w-4 animate-spin text-zinc-500" />}
+              <button
+                onClick={() => { setShowSearch((v) => !v); if (showSearch) setQuery(""); }}
+                className={`rounded-full border p-2 transition ${showSearch ? "border-sky-400/60 bg-sky-400/10 text-sky-300" : "border-zinc-700 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"}`}
+              >
+                <Search className="h-4 w-4" />
+              </button>
             </div>
-            <button
-              onClick={() => setShowConfig((v) => !v)}
-              className="rounded-full border border-zinc-700 p-2 text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
-            >
-              <Settings2 className="h-4 w-4" />
-            </button>
           </div>
-
-          {showConfig && (
-            <div className="mt-3 rounded-2xl border border-zinc-700 bg-zinc-800/70 p-3 text-sm">
-              <div className="mb-2 font-medium text-zinc-100">Settings</div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-zinc-300">Hide completed tasks</span>
-                  <button
-                    onClick={() => setHideDone((v) => !v)}
-                    className={`relative h-5 w-9 rounded-full transition-colors ${hideDone ? "bg-sky-400" : "bg-zinc-600"}`}
-                  >
-                    <span
-                      className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${hideDone ? "translate-x-4" : "translate-x-0.5"}`}
-                    />
-                  </button>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-zinc-300">Refresh tasks</span>
-                  <button
-                    onClick={() => {
-                      setTasksLoading(true);
-                      setDbsLoading(true);
-                      fetch("/api/tasks")
-                        .then((r) => r.json())
-                        .then((data) => setTasks(Array.isArray(data) ? data : []))
-                        .catch(() => {})
-                        .finally(() => setTasksLoading(false));
-                      fetch("/api/databases")
-                        .then((r) => r.json())
-                        .then((data: TaskDatabase[]) => setDatabases(Array.isArray(data) ? data : []))
-                        .catch(() => {})
-                        .finally(() => setDbsLoading(false));
-                      setShowConfig(false);
-                    }}
-                    className="rounded-full border border-zinc-600 px-3 py-1 text-xs text-zinc-200 transition hover:bg-zinc-700"
-                  >
-                    Refresh
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Nav tabs */}
           <div className="mt-3 grid grid-cols-3 gap-1.5 rounded-2xl bg-zinc-800 p-1">
@@ -328,35 +335,28 @@ export default function Home() {
             <NavTab active={view === "inbox"}      onClick={() => { setView("inbox");      setSelectedDbId("all"); }} icon={Inbox}      label="Inbox" />
           </div>
 
-          {/* Search + Add — shown on all tabs */}
-          {(
-            <div className="mt-3 flex gap-2">
-              <div className="flex flex-1 items-center gap-2 rounded-2xl border border-zinc-700 bg-zinc-800 px-3 py-2.5">
-                <Search className="h-4 w-4 shrink-0 text-zinc-400" />
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search tasks"
-                  className="w-full bg-transparent text-sm text-zinc-50 outline-none placeholder:text-zinc-500"
-                />
-                {query && (
-                  <button onClick={() => setQuery("")} className="shrink-0 text-zinc-500 hover:text-zinc-300">
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-              <button
-                onClick={() => setComposeOpen(true)}
-                className="rounded-2xl bg-sky-400 px-4 py-2.5 text-sm font-medium text-zinc-950 transition hover:bg-sky-300"
-              >
-                Add
-              </button>
+          {/* Collapsible search */}
+          {showSearch && (
+            <div className="mt-3 flex items-center gap-2 rounded-2xl border border-zinc-700 bg-zinc-800 px-3 py-2.5">
+              <Search className="h-4 w-4 shrink-0 text-zinc-400" />
+              <input
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search tasks…"
+                className="w-full bg-transparent text-sm text-zinc-50 outline-none placeholder:text-zinc-500"
+              />
+              {query && (
+                <button onClick={() => setQuery("")} className="shrink-0 text-zinc-500 hover:text-zinc-300">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
           )}
         </header>
 
         {/* ── Main content ── */}
-        <main className="flex-1 overflow-y-auto px-4 pb-28 pt-4">
+        <main ref={mainRef} className="flex-1 overflow-y-auto px-4 pb-24 pt-4">
           {loading ? (
             <LoadingState />
           ) : (
@@ -371,18 +371,6 @@ export default function Home() {
               {/* Assigned view */}
               {view === "assigned" && (
                 <section className="space-y-3">
-                  <div className="mb-1 flex items-center justify-between gap-2">
-                    <SectionHeader
-                      title="Assigned to me"
-                      subtitle={`${visibleTasks.length} task${visibleTasks.length !== 1 ? "s" : ""}`}
-                    />
-                    <button
-                      onClick={() => setHideDone((v) => !v)}
-                      className="shrink-0 rounded-full border border-zinc-700 px-2.5 py-1 text-xs text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200"
-                    >
-                      {hideDone ? "Show done" : "Hide done"}
-                    </button>
-                  </div>
                   {visibleTasks.length === 0 ? (
                     <EmptyState
                       title="No tasks found"
@@ -399,10 +387,6 @@ export default function Home() {
               {/* Delegated view */}
               {view === "delegated" && (
                 <section className="space-y-3">
-                  <SectionHeader
-                    title="Delegated"
-                    subtitle={`${visibleTasks.length} task${visibleTasks.length !== 1 ? "s" : ""} you created, assigned to others`}
-                  />
                   {visibleTasks.length === 0 ? (
                     <EmptyState
                       title="Nothing delegated"
@@ -419,10 +403,6 @@ export default function Home() {
               {/* Inbox view */}
               {view === "inbox" && (
                 <section className="space-y-3">
-                  <SectionHeader
-                    title="Inbox"
-                    subtitle="Unsorted captures — open a task to view or edit details"
-                  />
                   {visibleTasks.length === 0 ? (
                     <EmptyState
                       title="Inbox is clear"
@@ -439,21 +419,13 @@ export default function Home() {
           )}
         </main>
 
-        {/* ── Footer ── */}
-        <footer className="fixed bottom-0 left-1/2 z-20 w-full max-w-md -translate-x-1/2 border-t border-zinc-800 bg-zinc-900/95 px-4 pb-5 pt-3 backdrop-blur">
-          <div className="flex items-center justify-between rounded-2xl bg-zinc-800 px-4 py-3 text-sm text-zinc-400">
-            <div>
-              <span className="text-zinc-200">{assignedTasks.length}</span> assigned
-              {" · "}
-              <span className="text-zinc-200">{delegatedTasks.length}</span> delegated
-              {" · "}
-              <span className="text-zinc-200">{inboxTasks.length}</span> inbox
-            </div>
-            <div className="text-xs text-zinc-500">
-              {databases.length} DB{databases.length !== 1 ? "s" : ""}
-            </div>
-          </div>
-        </footer>
+        {/* ── FAB ── */}
+        <button
+          onClick={() => setComposeOpen(true)}
+          className="fixed bottom-6 right-4 z-20 flex h-14 w-14 items-center justify-center rounded-full bg-sky-400 shadow-xl text-zinc-950 transition hover:bg-sky-300 active:scale-95"
+        >
+          <Plus className="h-6 w-6" />
+        </button>
 
         {/* ── Compose sheet ── */}
         {composeOpen && (
@@ -507,15 +479,6 @@ function NavTab({
       <Icon className="h-4 w-4" />
       <span>{label}</span>
     </button>
-  );
-}
-
-function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
-  return (
-    <div className="mb-1">
-      <div className="text-base font-semibold text-zinc-50">{title}</div>
-      <div className="mt-0.5 text-sm text-zinc-400">{subtitle}</div>
-    </div>
   );
 }
 
@@ -773,16 +736,22 @@ function TaskDetailSheet({
         <div className="h-full overflow-y-auto px-4 pb-12 pt-4">
 
           {/* Editable title */}
-          <div className="rounded-2xl border border-zinc-700 bg-zinc-800/70 p-4">
-            <label className="mb-2 block text-xs uppercase tracking-[0.18em] text-zinc-500">
-              Task
-            </label>
+          <div className="rounded-2xl border border-zinc-700 bg-zinc-800/70 px-4 py-3">
             <textarea
               value={editTitle}
-              onChange={(e) => setEditTitle(e.target.value)}
+              onChange={(e) => {
+                setEditTitle(e.target.value);
+                const el = e.target;
+                el.style.height = "auto";
+                el.style.height = el.scrollHeight + "px";
+              }}
               onBlur={handleTitleBlur}
-              rows={2}
-              className="w-full resize-none bg-transparent text-lg font-semibold text-zinc-50 outline-none"
+              rows={1}
+              className="w-full resize-none overflow-hidden bg-transparent text-lg font-semibold text-zinc-50 outline-none"
+              style={{ height: "auto" }}
+              ref={(el) => {
+                if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; }
+              }}
             />
           </div>
 
@@ -797,21 +766,22 @@ function TaskDetailSheet({
 
             <PropertyRow label="Status">
               {statuses.length > 1 ? (
-                <select
-                  value={editStatus}
-                  onChange={(e) => handleStatusChange(e.target.value)}
-                  className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-50 outline-none"
-                >
-                  {statuses.map((s) => (
-                    <option key={s} value={s} className="bg-zinc-900">
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <div className={`inline-flex rounded-full border px-3 py-1 text-xs ${statusTone(editStatus)}`}>
-                  {editStatus}
+                <div className="relative">
+                  <select
+                    value={editStatus}
+                    onChange={(e) => handleStatusChange(e.target.value)}
+                    className="w-full appearance-none rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 pr-8 text-sm text-zinc-50 outline-none"
+                  >
+                    {statuses.map((s) => (
+                      <option key={s} value={s} className="bg-zinc-900">
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
                 </div>
+              ) : (
+                <span className="text-sm text-zinc-300">{editStatus}</span>
               )}
             </PropertyRow>
 
@@ -820,7 +790,7 @@ function TaskDetailSheet({
                 type="date"
                 value={editDue}
                 onChange={(e) => handleDueChange(e.target.value)}
-                className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-50 outline-none [color-scheme:dark]"
+                className="w-full max-w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-50 outline-none [color-scheme:dark]"
               />
             </PropertyRow>
 
@@ -861,7 +831,7 @@ function TaskDetailSheet({
                     return (
                       <div key={key} className="flex items-start gap-3 text-sm">
                         <span className="w-28 shrink-0 text-xs text-zinc-500">{key}</span>
-                        <span className="text-zinc-300">{pretty}</span>
+                        <span className="min-w-0 break-words text-zinc-300">{pretty}</span>
                       </div>
                     );
                   })
