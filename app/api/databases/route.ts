@@ -6,6 +6,7 @@ function extractIcon(icon: any): string | undefined {
   if (!icon) return undefined;
   if (icon.type === "emoji") return icon.emoji;
   if (icon.type === "external") return icon.external?.url;
+  if (icon.type === "file") return icon.file?.url;
   return undefined;
 }
 

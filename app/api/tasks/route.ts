@@ -38,13 +38,36 @@ function getStatus(props: any) {
   return "Unknown";
 }
 
-function getAssignee(props: any) {
-  if (props?.["Assignee"]?.people?.[0]?.name) return props["Assignee"].people[0].name;
+function getAllAssigneeNames(props: any): string[] {
+  if (props?.["Assignee"]?.people) {
+    return props["Assignee"].people.map((p: any) => p.name).filter(Boolean);
+  }
   for (const key of Object.keys(props || {})) {
     const prop = props[key];
-    if (prop?.type === "people" && prop.people?.[0]?.name) return prop.people[0].name;
+    if (prop?.type === "people" && Array.isArray(prop.people)) {
+      return prop.people.map((p: any) => p.name).filter(Boolean);
+    }
   }
-  return undefined;
+  return [];
+}
+
+function getOtherAssigneeNames(props: any, excludeUserId?: string): string[] {
+  if (props?.["Assignee"]?.people) {
+    return props["Assignee"].people
+      .filter((p: any) => !excludeUserId || p.id !== excludeUserId)
+      .map((p: any) => p.name)
+      .filter(Boolean);
+  }
+  for (const key of Object.keys(props || {})) {
+    const prop = props[key];
+    if (prop?.type === "people" && Array.isArray(prop.people)) {
+      return prop.people
+        .filter((p: any) => !excludeUserId || p.id !== excludeUserId)
+        .map((p: any) => p.name)
+        .filter(Boolean);
+    }
+  }
+  return [];
 }
 
 function isAssignedToUser(props: any, userId: string): boolean {
@@ -65,7 +88,7 @@ function extractIcon(icon: any): string | undefined {
   if (!icon) return undefined;
   if (icon.type === "emoji") return icon.emoji;
   if (icon.type === "external") return icon.external?.url;
-  // Skip "file" type — those URLs have expiry times
+  if (icon.type === "file") return icon.file?.url;
   return undefined;
 }
 
@@ -108,7 +131,8 @@ export async function GET() {
           title: getTitle(props),
           due: getDue(props),
           status: getStatus(props),
-          assignee: getAssignee(props),
+          allAssigneeNames: getAllAssigneeNames(props),
+          otherAssignees: getOtherAssigneeNames(props, myUserId || undefined),
           databaseId: dbId,
           database: dbMeta[dbId]?.name ?? dbId.slice(0, 6),
           databaseIcon: dbMeta[dbId]?.icon,
@@ -199,6 +223,8 @@ export async function POST(req: Request) {
       database: labels[databaseId] || dbTitle,
       databaseIcon: extractIcon(db.icon),
       isInbox: databaseId === INBOX_DB,
+      allAssigneeNames: [],
+      otherAssignees: [],
       url: page.url,
       createdTime: page.created_time,
       lastEditedTime: page.last_edited_time,

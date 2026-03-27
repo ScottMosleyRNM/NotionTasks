@@ -23,7 +23,6 @@ type Task = {
   title: string;
   due?: string;
   status: string;
-  assignee?: string;
   databaseId: string;
   database: string;
   databaseIcon?: string;
@@ -31,6 +30,8 @@ type Task = {
   isInbox: boolean;
   isAssignedToMe: boolean;
   isCreatedByMe: boolean;
+  allAssigneeNames: string[];
+  otherAssignees: string[];
   url: string;
   createdTime: string;
   lastEditedTime: string;
@@ -222,6 +223,8 @@ export default function Home() {
       isInbox: db?.isInbox ?? false,
       isAssignedToMe: true,
       isCreatedByMe: true,
+      allAssigneeNames: [],
+      otherAssignees: [],
       url: "",
       createdTime: new Date().toISOString(),
       lastEditedTime: new Date().toISOString(),
@@ -387,7 +390,7 @@ export default function Home() {
                     />
                   ) : (
                     visibleTasks.map((task) => (
-                      <TaskRow key={task.id} task={task} onClick={() => setSelectedTaskId(task.id)} />
+                      <TaskRow key={task.id} task={task} view={view} onClick={() => setSelectedTaskId(task.id)} />
                     ))
                   )}
                 </section>
@@ -407,7 +410,7 @@ export default function Home() {
                     />
                   ) : (
                     visibleTasks.map((task) => (
-                      <TaskRow key={task.id} task={task} onClick={() => setSelectedTaskId(task.id)} />
+                      <TaskRow key={task.id} task={task} view={view} onClick={() => setSelectedTaskId(task.id)} />
                     ))
                   )}
                 </section>
@@ -427,7 +430,7 @@ export default function Home() {
                     />
                   ) : (
                     visibleTasks.map((task) => (
-                      <TaskRow key={task.id} task={task} onClick={() => setSelectedTaskId(task.id)} />
+                      <TaskRow key={task.id} task={task} view={view} onClick={() => setSelectedTaskId(task.id)} />
                     ))
                   )}
                 </section>
@@ -564,7 +567,7 @@ function FilterChip({
   );
 }
 
-function TaskRow({ task, onClick }: { task: Task; onClick: () => void }) {
+function TaskRow({ task, view, onClick }: { task: Task; view: AppView; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
@@ -572,7 +575,10 @@ function TaskRow({ task, onClick }: { task: Task; onClick: () => void }) {
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-zinc-50">{task.title}</div>
+          <div className="flex items-center gap-1.5 truncate">
+            {task.pageIcon && <NotionIcon icon={task.pageIcon} size="sm" />}
+            <span className="truncate text-sm font-medium text-zinc-50">{task.title}</span>
+          </div>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <span className={`rounded-full border px-2 py-0.5 text-xs ${statusTone(task.status)}`}>
               {task.status}
@@ -586,11 +592,16 @@ function TaskRow({ task, onClick }: { task: Task; onClick: () => void }) {
               <NotionIcon icon={task.databaseIcon} size="sm" />
               {task.database}
             </span>
-            {task.assignee && (
+            {view === "assigned" && task.otherAssignees.length > 0 && (
               <span className="rounded-full border border-zinc-700 px-2 py-0.5 text-xs text-zinc-400">
-                {task.assignee}
+                +{task.otherAssignees.length} {task.otherAssignees.length === 1 ? "other" : "others"}
               </span>
             )}
+            {view === "delegated" && task.otherAssignees.map((name) => (
+              <span key={name} className="rounded-full border border-zinc-700 px-2 py-0.5 text-xs text-zinc-400">
+                {name}
+              </span>
+            ))}
           </div>
         </div>
         <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500" />
@@ -778,9 +789,10 @@ function TaskDetailSheet({
           {/* Editable properties */}
           <div className="mt-3 space-y-3 rounded-2xl border border-zinc-700 bg-zinc-800/70 p-4">
             <PropertyRow label="Database">
-              <div className="rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-300">
+              <span className="inline-flex items-center gap-1.5 text-sm text-zinc-300">
+                <NotionIcon icon={task.databaseIcon} size="sm" />
                 {task.database}
-              </div>
+              </span>
             </PropertyRow>
 
             <PropertyRow label="Status">
@@ -812,11 +824,9 @@ function TaskDetailSheet({
               />
             </PropertyRow>
 
-            {task.assignee && (
+            {task.allAssigneeNames.length > 0 && (
               <PropertyRow label="Assignee">
-                <div className="rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-300">
-                  {task.assignee}
-                </div>
+                <span className="text-sm text-zinc-300">{task.allAssigneeNames.join(", ")}</span>
               </PropertyRow>
             )}
           </div>
