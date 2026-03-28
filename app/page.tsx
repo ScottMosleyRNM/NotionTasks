@@ -72,23 +72,36 @@ function formatDate(date?: string) {
 
 function isDoneStatus(status: string) {
   const s = status.toLowerCase();
-  return s.includes("done") || s.includes("complete");
+  return s.includes("done") || s.includes("complete") || s.includes("finished") || s.includes("closed");
 }
 
+function isCancelledStatus(status: string) {
+  const s = status.toLowerCase();
+  return s.includes("cancel") || s.includes("won't") || s.includes("wont") || s.includes("archive") || s.includes("skip");
+}
+
+function isInProgressStatus(status: string) {
+  const s = status.toLowerCase();
+  return s.includes("progress") || s.includes("active") || s.includes("doing") || s.includes("started") || s.includes("working") || s.includes("ongoing");
+}
+
+// Circle border + fill based on status group
 function statusCircleClass(status: string) {
   const s = status.toLowerCase();
-  if (s.includes("done") || s.includes("complete")) return "border-emerald-400 bg-emerald-400";
-  if (s.includes("progress") || s.includes("active") || s.includes("doing")) return "border-sky-400 bg-transparent";
-  if (s.includes("review")) return "border-indigo-400 bg-transparent";
-  if (s.includes("block")) return "border-rose-400 bg-transparent";
+  if (isDoneStatus(status))        return "border-emerald-500 bg-emerald-500";
+  if (isCancelledStatus(status))   return "border-zinc-600 bg-zinc-700";
+  if (isInProgressStatus(status))  return "border-sky-400 bg-sky-400/35";
+  if (s.includes("review") || s.includes("reviewing")) return "border-violet-400 bg-transparent";
+  if (s.includes("block") || s.includes("stuck"))      return "border-rose-500 bg-transparent";
+  // Not started / backlog / tabled / on hold / waiting / someday / later / todo
   return "border-zinc-600 bg-transparent";
 }
 
+// Small inner dot for states that use a border-only circle (helps differentiate at a glance)
 function statusDotBg(status: string) {
   const s = status.toLowerCase();
-  if (s.includes("progress") || s.includes("active") || s.includes("doing")) return "bg-sky-400";
-  if (s.includes("review")) return "bg-indigo-400";
-  if (s.includes("block")) return "bg-rose-400";
+  if (s.includes("review") || s.includes("reviewing")) return "bg-violet-400";
+  if (s.includes("block") || s.includes("stuck"))      return "bg-rose-500";
   return "";
 }
 
@@ -569,8 +582,9 @@ function StatusCircle({
   onStatusChange: (s: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const done = isDoneStatus(status);
-  const dot = statusDotBg(status);
+  const done      = isDoneStatus(status);
+  const cancelled = isCancelledStatus(status);
+  const dot       = statusDotBg(status);
 
   return (
     <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
@@ -578,8 +592,9 @@ function StatusCircle({
         onClick={() => setOpen((v) => !v)}
         className={`flex h-5 w-5 items-center justify-center rounded-full border-2 transition active:scale-90 ${statusCircleClass(status)}`}
       >
-        {done && <Check className="h-3 w-3 text-white" strokeWidth={3} />}
-        {!done && dot && <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />}
+        {done      && <Check className="h-3 w-3 text-white" strokeWidth={3} />}
+        {cancelled && !done && <X className="h-2.5 w-2.5 text-zinc-400" strokeWidth={3} />}
+        {!done && !cancelled && dot && <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />}
       </button>
       {open && (
         <>
