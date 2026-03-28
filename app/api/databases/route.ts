@@ -57,7 +57,7 @@ export async function GET() {
         name: labels[dbId] || notionTitle,
         icon: extractIcon(db.icon),
         statuses,
-        isInbox: dbId === INBOX_DB,
+        isInbox: dbId === INBOX_DB || notionTitle.toLowerCase().includes("inbox"),
       });
     } catch (error) {
       console.error("DB retrieve error", dbId, error);

@@ -306,7 +306,7 @@ export default function Home() {
       status: optimisticStatus,
       databaseId: composeDb,
       database: db?.name || composeDb.slice(0, 6),
-      isInbox: db?.isInbox ?? false,
+      isInbox: db ? (db.isInbox || db.name.toLowerCase().includes("inbox")) : false,
       isAssignedToMe: true,
       isCreatedByMe: true,
       allAssigneeNames: [],
@@ -679,7 +679,24 @@ function ComposeSheet({
   onSubmit: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [keyboardOffset, setKeyboardOffset] = useState(0);
+
   useEffect(() => { inputRef.current?.focus(); }, []);
+
+  // Push sheet above keyboard on iOS using visualViewport
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const update = () => {
+      setKeyboardOffset(Math.max(0, window.innerHeight - vv.height - vv.offsetTop));
+    };
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, []);
 
   return (
     <div
@@ -687,7 +704,8 @@ function ComposeSheet({
       onClick={onClose}
     >
       <div
-        className="absolute inset-x-0 bottom-0 rounded-t-3xl border-t border-zinc-700 bg-zinc-900 px-4 pb-10 pt-4 shadow-2xl"
+        className="absolute inset-x-0 rounded-t-3xl border-t border-zinc-700 bg-zinc-900 px-4 pb-10 pt-4 shadow-2xl"
+        style={{ bottom: keyboardOffset }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-zinc-700" />
