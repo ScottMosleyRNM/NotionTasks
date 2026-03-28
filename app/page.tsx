@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowRight,
+  Check,
   ChevronDown,
   ExternalLink,
   Inbox,
@@ -70,19 +70,30 @@ function formatDate(date?: string) {
   });
 }
 
-function statusTone(status: string) {
+function isDoneStatus(status: string) {
   const s = status.toLowerCase();
-  if (s.includes("done") || s.includes("complete"))
-    return "text-emerald-100 border-emerald-400/25 bg-emerald-400/10";
-  if (s.includes("progress") || s.includes("active") || s.includes("doing"))
-    return "text-sky-100 border-sky-400/25 bg-sky-400/10";
-  if (s.includes("review"))
-    return "text-indigo-100 border-indigo-400/25 bg-indigo-400/10";
-  if (s.includes("block"))
-    return "text-rose-100 border-rose-400/25 bg-rose-400/10";
-  if (s.includes("inbox"))
-    return "text-amber-100 border-amber-400/25 bg-amber-400/10";
-  return "text-zinc-100 border-zinc-500 bg-zinc-700/60";
+  return s.includes("done") || s.includes("complete");
+}
+
+function statusCircleClass(status: string) {
+  const s = status.toLowerCase();
+  if (s.includes("done") || s.includes("complete")) return "border-emerald-400 bg-emerald-400";
+  if (s.includes("progress") || s.includes("active") || s.includes("doing")) return "border-sky-400 bg-transparent";
+  if (s.includes("review")) return "border-indigo-400 bg-transparent";
+  if (s.includes("block")) return "border-rose-400 bg-transparent";
+  return "border-zinc-600 bg-transparent";
+}
+
+function statusDotBg(status: string) {
+  const s = status.toLowerCase();
+  if (s.includes("progress") || s.includes("active") || s.includes("doing")) return "bg-sky-400";
+  if (s.includes("review")) return "bg-indigo-400";
+  if (s.includes("block")) return "bg-rose-400";
+  return "";
+}
+
+function isOverdue(due: string) {
+  return new Date(`${due}T23:59:59`) < new Date();
 }
 
 function sortTasks(tasks: Task[]) {
@@ -194,8 +205,6 @@ export default function Home() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const inboxDbs = useMemo(() => databases.filter((d) => d.isInbox), [databases]);
-  const inboxDbIds = useMemo(() => new Set(inboxDbs.map((d) => d.id)), [inboxDbs]);
-
   const inboxTasks = useMemo(
     () => sortTasks(tasks.filter((t) => t.isInbox)),
     [tasks]
@@ -406,52 +415,34 @@ export default function Home() {
                 </button>
               </div>
 
-              {/* Assigned view */}
-              {view === "assigned" && (
-                <section className="space-y-3">
-                  {visibleTasks.length === 0 ? (
-                    <EmptyState
-                      title="No tasks found"
-                      subtitle={query ? "Try a different search term." : "Nothing assigned to you right now."}
+              {/* Task list (all views share the same rendering) */}
+              {visibleTasks.length === 0 ? (
+                <EmptyState
+                  title={
+                    view === "inbox" ? "Inbox is clear" :
+                    view === "delegated" ? "Nothing delegated" :
+                    "No tasks found"
+                  }
+                  subtitle={
+                    query ? "Try a different search term." :
+                    view === "inbox" ? "Nothing waiting to be sorted." :
+                    view === "delegated" ? "No tasks you created are assigned to others." :
+                    "Nothing assigned to you right now."
+                  }
+                />
+              ) : (
+                <div className="divide-y divide-zinc-800/60">
+                  {visibleTasks.map((task) => (
+                    <TaskRow
+                      key={task.id}
+                      task={task}
+                      view={view}
+                      statuses={databases.find((d) => d.id === task.databaseId)?.statuses ?? [task.status]}
+                      onClick={() => setSelectedTaskId(task.id)}
+                      onPatch={patchTask}
                     />
-                  ) : (
-                    visibleTasks.map((task) => (
-                      <TaskRow key={task.id} task={task} view={view} onClick={() => setSelectedTaskId(task.id)} />
-                    ))
-                  )}
-                </section>
-              )}
-
-              {/* Delegated view */}
-              {view === "delegated" && (
-                <section className="space-y-3">
-                  {visibleTasks.length === 0 ? (
-                    <EmptyState
-                      title="Nothing delegated"
-                      subtitle={query ? "Try a different search term." : "No tasks you created are assigned to others."}
-                    />
-                  ) : (
-                    visibleTasks.map((task) => (
-                      <TaskRow key={task.id} task={task} view={view} onClick={() => setSelectedTaskId(task.id)} />
-                    ))
-                  )}
-                </section>
-              )}
-
-              {/* Inbox view */}
-              {view === "inbox" && (
-                <section className="space-y-3">
-                  {visibleTasks.length === 0 ? (
-                    <EmptyState
-                      title="Inbox is clear"
-                      subtitle={query ? "No inbox tasks match your search." : "Nothing waiting to be sorted."}
-                    />
-                  ) : (
-                    visibleTasks.map((task) => (
-                      <TaskRow key={task.id} task={task} view={view} onClick={() => setSelectedTaskId(task.id)} />
-                    ))
-                  )}
-                </section>
+                  ))}
+                </div>
               )}
             </>
           )}
@@ -568,46 +559,93 @@ function FilterChip({
   );
 }
 
-function TaskRow({ task, view, onClick }: { task: Task; view: AppView; onClick: () => void }) {
+function StatusCircle({
+  status,
+  statuses,
+  onStatusChange,
+}: {
+  status: string;
+  statuses: string[];
+  onStatusChange: (s: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const done = isDoneStatus(status);
+  const dot = statusDotBg(status);
+
   return (
-    <button
-      onClick={onClick}
-      className="w-full rounded-2xl border border-zinc-700 bg-zinc-800/70 p-4 text-left transition hover:border-zinc-500 hover:bg-zinc-800"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 truncate">
-            {task.pageIcon && <NotionIcon icon={task.pageIcon} size="sm" />}
-            <span className="truncate text-sm font-medium text-zinc-50">{task.title}</span>
-          </div>
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <span className={`rounded-full border px-2 py-0.5 text-xs ${statusTone(task.status)}`}>
-              {task.status}
-            </span>
-            {task.due && isValidDate(task.due) && (
-              <span className="rounded-full border border-zinc-600 px-2 py-0.5 text-xs text-zinc-300">
-                {formatDate(task.due)}
-              </span>
-            )}
-            <span className="inline-flex items-center gap-1 rounded-full border border-zinc-700 px-2 py-0.5 text-xs text-zinc-400">
-              <NotionIcon icon={task.databaseIcon} fallback={getDbFallbackIcon(task.database)} size="sm" />
-              {task.database}
-            </span>
-            {view === "assigned" && task.otherAssignees.length > 0 && (
-              <span className="rounded-full border border-zinc-700 px-2 py-0.5 text-xs text-zinc-400">
-                +{task.otherAssignees.length} {task.otherAssignees.length === 1 ? "other" : "others"}
-              </span>
-            )}
-            {view === "delegated" && task.otherAssignees.map((name) => (
-              <span key={name} className="rounded-full border border-zinc-700 px-2 py-0.5 text-xs text-zinc-400">
-                {name}
-              </span>
+    <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={`flex h-5 w-5 items-center justify-center rounded-full border-2 transition active:scale-90 ${statusCircleClass(status)}`}
+      >
+        {done && <Check className="h-3 w-3 text-white" strokeWidth={3} />}
+        {!done && dot && <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 top-7 z-40 min-w-[160px] overflow-hidden rounded-xl border border-zinc-700 bg-zinc-800 py-1 shadow-2xl">
+            {statuses.map((s) => (
+              <button
+                key={s}
+                onClick={() => { onStatusChange(s); setOpen(false); }}
+                className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition hover:bg-zinc-700 ${
+                  s === status ? "font-medium text-zinc-50" : "text-zinc-400"
+                }`}
+              >
+                <span className={`h-2.5 w-2.5 shrink-0 rounded-full border-2 ${statusCircleClass(s)}`} />
+                {s}
+              </button>
             ))}
           </div>
-        </div>
-        <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500" />
+        </>
+      )}
+    </div>
+  );
+}
+
+function TaskRow({
+  task,
+  view,
+  statuses,
+  onClick,
+  onPatch,
+}: {
+  task: Task;
+  view: AppView;
+  statuses: string[];
+  onClick: () => void;
+  onPatch: (id: string, updates: Partial<Task>) => void;
+}) {
+  const overdue = task.due && isValidDate(task.due) && isOverdue(task.due);
+  return (
+    <div
+      className="flex cursor-pointer items-center gap-3 py-3 transition active:bg-zinc-800/40"
+      onClick={onClick}
+    >
+      <StatusCircle
+        status={task.status}
+        statuses={statuses}
+        onStatusChange={(status) => onPatch(task.id, { status })}
+      />
+      <span className="shrink-0 leading-none">
+        <NotionIcon icon={task.databaseIcon} fallback={getDbFallbackIcon(task.database)} size="sm" />
+      </span>
+      <span className="min-w-0 flex-1 truncate text-sm text-zinc-100">{task.title}</span>
+      <div className="flex shrink-0 items-center gap-2">
+        {view === "delegated" && task.otherAssignees.length > 0 && (
+          <span className="truncate text-xs text-zinc-500">{task.otherAssignees[0]}</span>
+        )}
+        {view === "assigned" && task.otherAssignees.length > 0 && (
+          <span className="text-xs text-zinc-500">+{task.otherAssignees.length}</span>
+        )}
+        {task.due && isValidDate(task.due) && (
+          <span className={`text-xs ${overdue ? "text-rose-400" : "text-zinc-500"}`}>
+            {formatDate(task.due)}
+          </span>
+        )}
       </div>
-    </button>
+    </div>
   );
 }
 
