@@ -87,22 +87,14 @@ function isInProgressStatus(status: string) {
 
 // Circle border + fill based on status group
 function statusCircleClass(status: string) {
+  if (isDoneStatus(status))       return "border-emerald-500 bg-emerald-500";
+  if (isCancelledStatus(status))  return "border-zinc-600 bg-zinc-700";
+  if (isInProgressStatus(status)) return "border-sky-400 bg-sky-400/40";
   const s = status.toLowerCase();
-  if (isDoneStatus(status))        return "border-emerald-500 bg-emerald-500";
-  if (isCancelledStatus(status))   return "border-zinc-600 bg-zinc-700";
-  if (isInProgressStatus(status))  return "border-sky-400 bg-sky-400/35";
-  if (s.includes("review") || s.includes("reviewing")) return "border-violet-400 bg-transparent";
-  if (s.includes("block") || s.includes("stuck"))      return "border-rose-500 bg-transparent";
+  if (s.includes("review") || s.includes("reviewing")) return "border-violet-400 bg-violet-400/40";
+  if (s.includes("block") || s.includes("stuck"))      return "border-rose-500 bg-rose-500/40";
   // Not started / backlog / tabled / on hold / waiting / someday / later / todo
   return "border-zinc-600 bg-transparent";
-}
-
-// Small inner dot for states that use a border-only circle (helps differentiate at a glance)
-function statusDotBg(status: string) {
-  const s = status.toLowerCase();
-  if (s.includes("review") || s.includes("reviewing")) return "bg-violet-400";
-  if (s.includes("block") || s.includes("stuck"))      return "bg-rose-500";
-  return "";
 }
 
 function isOverdue(due: string) {
@@ -584,7 +576,6 @@ function StatusCircle({
   const [open, setOpen] = useState(false);
   const done      = isDoneStatus(status);
   const cancelled = isCancelledStatus(status);
-  const dot       = statusDotBg(status);
 
   return (
     <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
@@ -594,7 +585,6 @@ function StatusCircle({
       >
         {done      && <Check className="h-3 w-3 text-white" strokeWidth={3} />}
         {cancelled && !done && <X className="h-2.5 w-2.5 text-zinc-400" strokeWidth={3} />}
-        {!done && !cancelled && dot && <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />}
       </button>
       {open && (
         <>
