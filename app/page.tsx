@@ -874,15 +874,13 @@ function TaskDetailSheet({
             </PropertyRow>
 
             <PropertyRow label="Due date">
-              <div className="w-full overflow-hidden">
-                <input
-                  type="date"
-                  value={editDue}
-                  onChange={(e) => handleDueChange(e.target.value)}
-                  style={{ boxSizing: "border-box" }}
-                  className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-50 outline-none [color-scheme:dark]"
-                />
-              </div>
+              <input
+                type="date"
+                value={editDue}
+                onChange={(e) => handleDueChange(e.target.value)}
+                style={{ boxSizing: "border-box", display: "block", width: "100%" }}
+                className="rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-50 outline-none [color-scheme:dark]"
+              />
             </PropertyRow>
 
             {task.allAssigneeNames.length > 0 && (
