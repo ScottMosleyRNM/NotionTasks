@@ -84,8 +84,9 @@ function isInProgressStatus(status: string) {
   const s = status.toLowerCase();
   return (
     s.includes("progress") || s.includes("active") || s.includes("doing") ||
-    s.includes("started") || s.includes("working") || s.includes("ongoing") ||
-    s.includes("discussion") // "In Discussion" → blue
+    (s.includes("started") && !s.includes("not start")) || // exclude "Not Started"
+    s.includes("working") || s.includes("ongoing") ||
+    s.includes("discussion")
   );
 }
 
@@ -639,9 +640,6 @@ function TaskRow({
         statuses={statuses}
         onStatusChange={(status) => onPatch(task.id, { status })}
       />
-      <span className="shrink-0 leading-none">
-        <NotionIcon icon={task.databaseIcon} fallback={getDbFallbackIcon(task.database)} size="sm" />
-      </span>
       <span className="min-w-0 flex-1 truncate text-sm text-zinc-100">{task.title}</span>
       <div className="flex shrink-0 items-center gap-2">
         {view === "delegated" && task.otherAssignees.length > 0 && (
@@ -654,6 +652,9 @@ function TaskRow({
           <span className={`text-xs ${overdue ? "text-rose-400" : "text-zinc-500"}`}>
             {formatDate(task.due)}
           </span>
+        )}
+        {(task.isInbox || task.database.toLowerCase().includes("discuss")) && (
+          <NotionIcon icon={task.databaseIcon} fallback={getDbFallbackIcon(task.database)} size="sm" />
         )}
       </div>
     </div>
