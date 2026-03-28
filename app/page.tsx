@@ -104,6 +104,8 @@ export default function Home() {
   const [view, setView] = useState<AppView>("assigned");
   const [query, setQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
+  const [hideDone, setHideDone] = useState(true);
+  const [sortBy, setSortBy] = useState<"due" | "status">("due");
   const [selectedDbId, setSelectedDbId] = useState<"all" | string>("all");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [composeOpen, setComposeOpen] = useState(false);
@@ -217,8 +219,7 @@ export default function Home() {
       view === "delegated" ? delegatedTasks :
       assignedTasks;
 
-    // Always hide done/complete tasks on Assigned tab
-    if (view === "assigned") {
+    if (hideDone) {
       base = base.filter((t) => {
         const s = t.status.toLowerCase();
         return !s.includes("done") && !s.includes("complete");
@@ -228,16 +229,20 @@ export default function Home() {
       selectedDbId === "all"
         ? base
         : base.filter((t) => t.databaseId === selectedDbId);
-    if (!query.trim()) return filtered;
-    const q = query.toLowerCase();
-    return filtered.filter((t) =>
-      [t.title, t.status, t.database, ...t.otherAssignees]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase()
-        .includes(q)
-    );
-  }, [tasks, view, selectedDbId, query, inboxTasks, assignedTasks, delegatedTasks]);
+    const q = query.trim().toLowerCase();
+    const searched = !q
+      ? filtered
+      : filtered.filter((t) =>
+          [t.title, t.status, t.database, ...t.otherAssignees]
+            .filter(Boolean).join(" ").toLowerCase().includes(q)
+        );
+    if (sortBy === "status") {
+      return [...searched].sort((a, b) =>
+        a.status !== b.status ? a.status.localeCompare(b.status) : a.title.localeCompare(b.title)
+      );
+    }
+    return searched;
+  }, [tasks, view, selectedDbId, query, hideDone, sortBy, inboxTasks, assignedTasks, delegatedTasks]);
 
   const nonInboxDbs = useMemo(
     () => databases.filter((d) => !d.isInbox),
@@ -375,6 +380,31 @@ export default function Home() {
                 databases={view === "inbox" ? inboxDbs : nonInboxDbs}
                 onChange={setSelectedDbId}
               />
+
+              {/* Sort + done toolbar */}
+              <div className="mb-4 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-zinc-500">Sort:</span>
+                  <button
+                    onClick={() => setSortBy("due")}
+                    className={`rounded-full px-2.5 py-1 text-xs transition ${sortBy === "due" ? "bg-zinc-700 text-zinc-100" : "text-zinc-400 hover:text-zinc-200"}`}
+                  >
+                    Due date
+                  </button>
+                  <button
+                    onClick={() => setSortBy("status")}
+                    className={`rounded-full px-2.5 py-1 text-xs transition ${sortBy === "status" ? "bg-zinc-700 text-zinc-100" : "text-zinc-400 hover:text-zinc-200"}`}
+                  >
+                    Status
+                  </button>
+                </div>
+                <button
+                  onClick={() => setHideDone((v) => !v)}
+                  className="shrink-0 rounded-full border border-zinc-700 px-2.5 py-1 text-xs text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200"
+                >
+                  {hideDone ? "Show done" : "Hide done"}
+                </button>
+              </div>
 
               {/* Assigned view */}
               {view === "assigned" && (
