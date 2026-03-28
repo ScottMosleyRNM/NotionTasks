@@ -82,7 +82,11 @@ function isCancelledStatus(status: string) {
 
 function isInProgressStatus(status: string) {
   const s = status.toLowerCase();
-  return s.includes("progress") || s.includes("active") || s.includes("doing") || s.includes("started") || s.includes("working") || s.includes("ongoing");
+  return (
+    s.includes("progress") || s.includes("active") || s.includes("doing") ||
+    s.includes("started") || s.includes("working") || s.includes("ongoing") ||
+    s.includes("discussion") // "In Discussion" → blue
+  );
 }
 
 // Circle border + fill based on status group
@@ -92,7 +96,9 @@ function statusCircleClass(status: string) {
   if (isInProgressStatus(status)) return "border-sky-400 bg-sky-400/40";
   const s = status.toLowerCase();
   if (s.includes("review") || s.includes("reviewing")) return "border-violet-400 bg-violet-400/40";
-  if (s.includes("block") || s.includes("stuck"))      return "border-rose-500 bg-rose-500/40";
+  // Blocked, stuck, or needs a specific action (meeting, decision, etc.)
+  if (s.includes("block") || s.includes("stuck") || s.includes("meeting") || s.includes("needs"))
+    return "border-rose-500 bg-rose-500/40";
   // Not started / backlog / tabled / on hold / waiting / someday / later / todo
   return "border-zinc-600 bg-transparent";
 }
@@ -867,12 +873,15 @@ function TaskDetailSheet({
             </PropertyRow>
 
             <PropertyRow label="Due date">
-              <input
-                type="date"
-                value={editDue}
-                onChange={(e) => handleDueChange(e.target.value)}
-                className="w-full max-w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-50 outline-none [color-scheme:dark]"
-              />
+              <div className="w-full overflow-hidden">
+                <input
+                  type="date"
+                  value={editDue}
+                  onChange={(e) => handleDueChange(e.target.value)}
+                  style={{ boxSizing: "border-box" }}
+                  className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-50 outline-none [color-scheme:dark]"
+                />
+              </div>
             </PropertyRow>
 
             {task.allAssigneeNames.length > 0 && (
