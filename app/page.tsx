@@ -206,10 +206,11 @@ export default function Home() {
   const today = getTodayStr();
   const inboxTasks = useMemo(() => tasks.filter(t => t.isInbox), [tasks]);
   const assignedNonInbox = useMemo(() => tasks.filter(t => !t.isInbox && t.isAssignedToMe), [tasks]);
+  const nonInboxTasks = useMemo(() => tasks.filter(t => !t.isInbox), [tasks]);
   const delegatedTasks = useMemo(() => tasks.filter(t => !t.isInbox && t.isCreatedByMe && !t.isAssignedToMe), [tasks]);
-  const todayTasks = useMemo(() => assignedNonInbox.filter(t => t.due && (isToday(t.due, today) || isOverdue(t.due, today))), [assignedNonInbox, today]);
-  const upcomingTasks = useMemo(() => assignedNonInbox.filter(t => t.due && !isToday(t.due, today) && !isOverdue(t.due, today)), [assignedNonInbox, today]);
-  const anytimeTasks = useMemo(() => assignedNonInbox.filter(t => !t.due), [assignedNonInbox]);
+  const todayTasks = useMemo(() => nonInboxTasks.filter(t => t.due && (isToday(t.due, today) || isOverdue(t.due, today))), [nonInboxTasks, today]);
+  const upcomingTasks = useMemo(() => nonInboxTasks.filter(t => t.due && !isToday(t.due, today) && !isOverdue(t.due, today)), [nonInboxTasks, today]);
+  const anytimeTasks = useMemo(() => nonInboxTasks.filter(t => !t.due), [nonInboxTasks]);
 
   const counts = useMemo(() => ({
     inbox: inboxTasks.filter(t => !isDoneStatus(t.status)).length,
@@ -349,15 +350,15 @@ export default function Home() {
         </div>
         {nonInboxDbs.length > 0 && (
           <div className="mt-2 pt-3 border-t border-[#DDD8D0] px-3 pb-4">
-            <p className="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-[#B0AA9F]">Sources</p>
-            {nonInboxDbs.map((db, i) => (
+            <p className="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-[#B0AA9F]">Areas</p>
+            {nonInboxDbs.map((db) => (
               <button key={db.id}
                 onClick={() => { setNavView("source"); setDbFilter(db.id); setQuery(""); }}
                 className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-[13px] transition-colors ${
                   navView === "source" && dbFilter === db.id ? "bg-white shadow-sm text-gray-900 font-medium" : "text-[#4A453D] hover:bg-[#E5E0D8]"
                 }`}
               >
-                <span className={`w-2 h-2 rounded-full shrink-0 ${DB_DOT_COLORS[i % DB_DOT_COLORS.length]}`} />
+                <span className={`w-2 h-2 rounded-full shrink-0 ${getDbDotColor(db.id, databases)}`} />
                 <span className="truncate">{db.name}</span>
               </button>
             ))}
@@ -373,8 +374,7 @@ export default function Home() {
       </aside>
 
       {/* ── Main content ── */}
-      <div className="flex flex-1 flex-col min-w-0 transition-[padding] duration-300"
-        style={{ paddingRight: selectedTask ? "384px" : "0" }}>
+      <div className="flex flex-1 flex-col min-w-0">
 
         {/* Header */}
         <header className="flex-none bg-white px-5 md:px-8 pt-5 md:pt-8 pb-2">
@@ -424,7 +424,7 @@ export default function Home() {
                   {group.tasks.map(task => (
                     <TaskRow key={task.id} task={task} databases={databases}
                       statuses={databases.find(d => d.id === task.databaseId)?.statuses ?? [task.status]}
-                      showDb={navView !== "inbox"} today={today}
+                      showDb={navView !== "inbox" && navView !== "source"} today={today}
                       onClick={() => setSelectedTaskId(task.id)} onPatch={patchTask} />
                   ))}
                 </div>
@@ -617,7 +617,7 @@ function TaskRow({ task, databases, statuses, showDb, today, onClick, onPatch }:
   return (
     <div ref={rowRef} className="relative overflow-hidden">
       {/* Swipe reveal */}
-      <div className="absolute inset-y-0 left-0 flex items-center pl-2"
+      <div className="absolute inset-y-0 left-0 flex items-center pl-2 pointer-events-none"
         style={{ opacity: Math.min(1, swipeX / 50) }}>
         <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center">
           <Check className="h-4 w-4 text-emerald-600" strokeWidth={2.5} />
@@ -689,109 +689,123 @@ function TaskDetailPanel({ task, database, databases, onClose, onPatch }: {
 
   return (
     <>
-      <div className="fixed inset-0 z-40 md:hidden bg-black/20 backdrop-blur-sm"
-        style={{ opacity: mounted ? 1 : 0, transition: "opacity 0.3s" }}
+      {/* Backdrop */}
+      <div className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm"
+        style={{ opacity: mounted ? 1 : 0, transition: "opacity 0.25s" }}
         onClick={onClose} />
-      <div className="fixed z-50 bg-white shadow-2xl flex flex-col md:inset-y-0 md:right-0 md:w-96 md:border-l md:border-stone-200 inset-x-0 bottom-0 max-h-[92dvh] rounded-t-2xl"
-        style={{ transform: mounted ? "none" : "translateY(100%)", transition: "transform 0.35s cubic-bezier(0.32,0.72,0,1)" }}>
 
-        {/* Mobile handle */}
-        <div className="md:hidden flex justify-center pt-2.5 pb-1 shrink-0">
-          <div className="w-10 h-1 rounded-full bg-stone-300" />
-        </div>
+      {/* Modal wrapper — bottom sheet on mobile, centered card on desktop */}
+      <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center md:p-6 pointer-events-none">
+        <div className="pointer-events-auto bg-white shadow-2xl flex flex-col
+          w-full rounded-t-2xl max-h-[92dvh]
+          md:rounded-2xl md:max-h-[85vh] md:w-full md:max-w-lg"
+          style={{ transform: mounted ? "none" : "translateY(40px)", opacity: mounted ? 1 : 0, transition: "transform 0.35s cubic-bezier(0.32,0.72,0,1), opacity 0.25s" }}>
 
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-stone-100 shrink-0">
-          {task.url ? (
-            <a href={task.url} target="_blank" rel="noreferrer"
-              className="inline-flex items-center gap-1.5 text-sm text-blue-500 hover:text-blue-600 font-medium transition-colors">
-              <ArrowUpRight className="h-4 w-4" />Open in Notion
-            </a>
-          ) : <div />}
-          <button onClick={onClose}
-            className="p-1.5 rounded-full hover:bg-stone-100 text-stone-400 hover:text-stone-600 transition-colors">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto px-5 pb-8 pt-4">
-          <textarea value={editTitle}
-            onChange={e => { setEditTitle(e.target.value); const el = e.target; el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; }}
-            onBlur={handleTitleBlur} rows={1}
-            className="w-full resize-none overflow-hidden bg-transparent text-[20px] font-bold text-gray-900 outline-none leading-snug"
-            ref={el => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } }} />
-
-          <div className="flex items-center gap-1.5 mt-1.5 mb-4">
-            <span className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
-            <span className="text-sm text-stone-500">{task.database}</span>
+          {/* Mobile drag handle */}
+          <div className="md:hidden flex justify-center pt-2.5 pb-1 shrink-0">
+            <div className="w-10 h-1 rounded-full bg-stone-300" />
           </div>
 
-          <div className="divide-y divide-stone-100">
-            <div className="flex items-center gap-3 py-2.5">
-              <span className="text-sm text-stone-400 w-20 shrink-0">Status</span>
-              {statuses.length > 1 ? (
-                <div className="relative flex-1">
-                  <select value={editStatus} onChange={e => handleStatusChange(e.target.value)}
-                    className="w-full appearance-none bg-transparent text-sm text-gray-900 outline-none cursor-pointer pr-5">
-                    {statuses.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-stone-400" />
-                </div>
-              ) : <span className="text-sm text-gray-900">{editStatus}</span>}
+          {/* Header — just close button */}
+          <div className="flex items-center justify-end px-4 py-2 shrink-0">
+            <button onClick={onClose}
+              className="p-1.5 rounded-full hover:bg-stone-100 text-stone-400 hover:text-stone-600 transition-colors">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Body */}
+          <div className="flex-1 overflow-y-auto px-5 pb-6 pt-1">
+            <textarea value={editTitle}
+              onChange={e => { setEditTitle(e.target.value); const el = e.target; el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; }}
+              onBlur={handleTitleBlur} rows={1}
+              className="w-full resize-none overflow-hidden bg-transparent text-[20px] font-bold text-gray-900 outline-none leading-snug"
+              ref={el => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } }} />
+
+            <div className="flex items-center gap-1.5 mt-1.5 mb-4">
+              <span className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
+              <span className="text-sm text-stone-500">{task.database}</span>
             </div>
 
-            <div className="flex items-center gap-3 py-2.5">
-              <span className="text-sm text-stone-400 w-20 shrink-0">Due date</span>
-              <input type="date" value={editDue} onChange={e => handleDueChange(e.target.value)}
-                className="flex-1 bg-transparent text-sm text-gray-900 outline-none [color-scheme:light]" />
-            </div>
-
-            {task.allAssigneeNames.length > 0 && (
+            <div className="divide-y divide-stone-100">
               <div className="flex items-center gap-3 py-2.5">
-                <span className="text-sm text-stone-400 w-20 shrink-0">Assignees</span>
-                <span className="text-sm text-gray-900">{task.allAssigneeNames.join(", ")}</span>
+                <span className="text-sm text-stone-400 w-20 shrink-0">Status</span>
+                {statuses.length > 1 ? (
+                  <div className="relative flex-1">
+                    <select value={editStatus} onChange={e => handleStatusChange(e.target.value)}
+                      className="w-full appearance-none bg-transparent text-sm text-gray-900 outline-none cursor-pointer pr-5">
+                      {statuses.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-stone-400" />
+                  </div>
+                ) : <span className="text-sm text-gray-900">{editStatus}</span>}
               </div>
-            )}
-          </div>
 
-          <div className="mt-5">
-            <p className="text-xs font-semibold uppercase tracking-widest text-stone-400 mb-2">Notes</p>
-            {detailLoading ? (
-              <div className="space-y-2">
-                <div className="h-3 bg-stone-100 animate-pulse rounded w-3/4" />
-                <div className="h-3 bg-stone-100 animate-pulse rounded w-1/2" />
+              <div className="flex items-center gap-3 py-2.5">
+                <span className="text-sm text-stone-400 w-20 shrink-0">Due date</span>
+                <input type="date" value={editDue} onChange={e => handleDueChange(e.target.value)}
+                  className="flex-1 bg-transparent text-sm text-gray-900 outline-none [color-scheme:light]" />
               </div>
-            ) : detail?.bodyText ? (
-              <p className="text-sm text-stone-600 leading-relaxed whitespace-pre-wrap">{detail.bodyText}</p>
-            ) : (
-              <p className="text-sm text-stone-300 italic">No notes on this page.</p>
-            )}
-          </div>
 
-          {!detailLoading && allProps.length > 0 && (
-            <div className="mt-5">
-              <button onClick={() => setPropsExpanded(v => !v)}
-                className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-stone-400 hover:text-stone-600 transition-colors">
-                <ChevronDown className={`h-3 w-3 transition-transform duration-200 ${propsExpanded ? "rotate-180" : ""}`} />
-                All properties
-              </button>
-              {propsExpanded && (
-                <div className="mt-2.5 space-y-2">
-                  {allProps.map(({ key, value }) => (
-                    <div key={key} className="flex items-start gap-3 text-sm">
-                      <span className="w-24 shrink-0 text-xs text-stone-400">{key}</span>
-                      <span className="min-w-0 text-stone-600 break-words">{value}</span>
-                    </div>
-                  ))}
+              {task.allAssigneeNames.length > 0 && (
+                <div className="flex items-center gap-3 py-2.5">
+                  <span className="text-sm text-stone-400 w-20 shrink-0">Assignees</span>
+                  <span className="text-sm text-gray-900">{task.allAssigneeNames.join(", ")}</span>
                 </div>
               )}
             </div>
-          )}
 
-          <div className="mt-5 text-xs text-stone-300 space-y-0.5">
-            <div>Created {new Date(task.createdTime).toLocaleString()}</div>
-            <div>Edited {new Date(task.lastEditedTime).toLocaleString()}</div>
+            <div className="mt-5">
+              <p className="text-xs font-semibold uppercase tracking-widest text-stone-400 mb-2">Notes</p>
+              {detailLoading ? (
+                <div className="space-y-2">
+                  <div className="h-3 bg-stone-100 animate-pulse rounded w-3/4" />
+                  <div className="h-3 bg-stone-100 animate-pulse rounded w-1/2" />
+                </div>
+              ) : detail?.bodyText ? (
+                <p className="text-sm text-stone-600 leading-relaxed whitespace-pre-wrap">{detail.bodyText}</p>
+              ) : (
+                <p className="text-sm text-stone-300 italic">No notes on this page.</p>
+              )}
+            </div>
+
+            {!detailLoading && allProps.length > 0 && (
+              <div className="mt-5">
+                <button onClick={() => setPropsExpanded(v => !v)}
+                  className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-stone-400 hover:text-stone-600 transition-colors">
+                  <ChevronDown className={`h-3 w-3 transition-transform duration-200 ${propsExpanded ? "rotate-180" : ""}`} />
+                  All properties
+                </button>
+                {propsExpanded && (
+                  <div className="mt-2.5 space-y-2">
+                    {allProps.map(({ key, value }) => (
+                      <div key={key} className="flex items-start gap-3 text-sm">
+                        <span className="w-24 shrink-0 text-xs text-stone-400">{key}</span>
+                        <span className="min-w-0 text-stone-600 break-words">{value}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Timestamps + subtle Notion link */}
+            <div className="mt-6 pt-4 border-t border-stone-100 flex items-end justify-between">
+              <div className="text-xs text-stone-300 space-y-0.5">
+                <div>Created {new Date(task.createdTime).toLocaleString()}</div>
+                <div>Edited {new Date(task.lastEditedTime).toLocaleString()}</div>
+              </div>
+              {task.url && (
+                <a href={task.url} target="_blank" rel="noreferrer"
+                  className="flex items-center gap-1 text-xs text-stone-300 hover:text-stone-500 transition-colors"
+                  title="Open in Notion">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.14c-.093-.514.28-.887.747-.933zM1.936 1.035l13.31-.98c1.634-.14 2.055-.047 3.082.7l4.249 2.986c.7.513.934.653.934 1.213v16.378c0 1.026-.373 1.634-1.68 1.726l-15.458.934c-.98.047-1.448-.093-1.962-.747l-3.129-4.06c-.56-.747-.793-1.306-.793-1.96V2.667c0-.839.374-1.54 1.447-1.632z"/>
+                  </svg>
+                  <span>Notion</span>
+                </a>
+              )}
+            </div>
           </div>
         </div>
       </div>
