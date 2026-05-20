@@ -1,5 +1,5 @@
 import { notion } from "@/lib/notion";
-import { DATABASE_IDS, getDatabaseLabels } from "@/lib/config";
+import { DATABASE_IDS, INBOX_DB, DEFAULT_ASSIGNEE, getDatabaseLabels } from "@/lib/config";
 import { NextResponse } from "next/server";
 
 function richTextToPlain(arr: any[] | undefined) {
@@ -28,6 +28,10 @@ function getDue(props: any) {
 }
 
 function getStatus(props: any) {
+  // "Checkbox" boolean field used by the Things database for completion tracking
+  if (props?.["Checkbox"]?.type === "checkbox") {
+    return props["Checkbox"].checkbox ? "Done" : "Not started";
+  }
   if (props?.["Status"]?.status?.name) return props["Status"].status.name;
   if (props?.["Status"]?.select?.name) return props["Status"].select.name;
   for (const key of Object.keys(props || {})) {
@@ -38,18 +42,90 @@ function getStatus(props: any) {
   return "Unknown";
 }
 
-function getAssignee(props: any) {
-  if (props?.["Assignee"]?.people?.[0]?.name) return props["Assignee"].people[0].name;
+function getArea(props: any): string | undefined {
+  if (props?.["Area"]?.type === "select") return props["Area"].select?.name || undefined;
+  if (props?.["Area"]?.type === "multi_select" && props["Area"].multi_select?.length) {
+    return props["Area"].multi_select[0].name;
+  }
+  return undefined;
+}
+
+function getAllAssigneeNames(props: any): string[] {
+  if (props?.["Assignee"]?.people) {
+    return props["Assignee"].people.map((p: any) => p.name).filter(Boolean);
+  }
   for (const key of Object.keys(props || {})) {
     const prop = props[key];
-    if (prop?.type === "people" && prop.people?.[0]?.name) return prop.people[0].name;
+    if (prop?.type === "people" && Array.isArray(prop.people)) {
+      return prop.people.map((p: any) => p.name).filter(Boolean);
+    }
   }
+  return [];
+}
+
+function getOtherAssigneeNames(props: any, excludeUserId?: string): string[] {
+  if (props?.["Assignee"]?.people) {
+    return props["Assignee"].people
+      .filter((p: any) => !excludeUserId || p.id !== excludeUserId)
+      .map((p: any) => p.name)
+      .filter(Boolean);
+  }
+  for (const key of Object.keys(props || {})) {
+    const prop = props[key];
+    if (prop?.type === "people" && Array.isArray(prop.people)) {
+      return prop.people
+        .filter((p: any) => !excludeUserId || p.id !== excludeUserId)
+        .map((p: any) => p.name)
+        .filter(Boolean);
+    }
+  }
+  return [];
+}
+
+function isAssignedToUser(props: any, userId: string): boolean {
+  if (!userId) return false;
+  if (props?.["Assignee"]?.people) {
+    return props["Assignee"].people.some((p: any) => p.id === userId);
+  }
+  for (const key of Object.keys(props || {})) {
+    const prop = props[key];
+    if (prop?.type === "people" && Array.isArray(prop.people)) {
+      return prop.people.some((p: any) => p.id === userId);
+    }
+  }
+  return false;
+}
+
+function extractIcon(icon: any): string | undefined {
+  if (!icon) return undefined;
+  if (icon.type === "emoji") return icon.emoji;
+  if (icon.type === "external") return icon.external?.url;
+  if (icon.type === "file") return icon.file?.url;
   return undefined;
 }
 
 export async function GET() {
   const labels = getDatabaseLabels();
+  const myUserId = DEFAULT_ASSIGNEE; // may be empty string if not configured
   const results: any[] = [];
+
+  // Pre-fetch DB metadata (real name + icon) in parallel before querying tasks
+  const dbMeta: Record<string, { name: string; icon?: string }> = {};
+  await Promise.all(
+    DATABASE_IDS.map(async (dbId) => {
+      try {
+        const db = await notion.databases.retrieve({ database_id: dbId }) as any;
+        const notionTitle =
+          (db.title || []).map((t: any) => t.plain_text).join("") || dbId.slice(0, 6);
+        dbMeta[dbId] = {
+          name: labels[dbId] || notionTitle,
+          icon: extractIcon(db.icon),
+        };
+      } catch {
+        dbMeta[dbId] = { name: labels[dbId] || dbId.slice(0, 6) };
+      }
+    })
+  );
 
   for (const dbId of DATABASE_IDS) {
     try {
@@ -67,9 +143,16 @@ export async function GET() {
           title: getTitle(props),
           due: getDue(props),
           status: getStatus(props),
-          assignee: getAssignee(props),
+          area: getArea(props),
+          allAssigneeNames: getAllAssigneeNames(props),
+          otherAssignees: getOtherAssigneeNames(props, myUserId || undefined),
           databaseId: dbId,
-          database: labels[dbId] || dbId.slice(0, 6),
+          database: dbMeta[dbId]?.name ?? dbId.slice(0, 6),
+          databaseIcon: dbMeta[dbId]?.icon,
+          pageIcon: extractIcon(safePage.icon),
+          isInbox: dbId === INBOX_DB || (dbMeta[dbId]?.name?.toLowerCase().includes("inbox") ?? false),
+          isAssignedToMe: myUserId ? isAssignedToUser(props, myUserId) : true,
+          isCreatedByMe: myUserId ? safePage.created_by?.id === myUserId : false,
           url: safePage.url,
           createdTime: safePage.created_time,
           lastEditedTime: safePage.last_edited_time,
@@ -88,4 +171,79 @@ export async function GET() {
   });
 
   return NextResponse.json(results);
+}
+
+export async function POST(req: Request) {
+  try {
+    const body = await req.json();
+    const { title, databaseId, status } = body as {
+      title: string;
+      databaseId: string;
+      status?: string;
+    };
+
+    if (!title || !databaseId) {
+      return NextResponse.json({ error: "title and databaseId are required" }, { status: 400 });
+    }
+
+    // Retrieve DB schema to find the title property key and status type
+    const db = await notion.databases.retrieve({ database_id: databaseId }) as any;
+    const dbProps = db.properties || {};
+
+    // Build properties object
+    const properties: Record<string, any> = {};
+
+    // Set title
+    for (const [key, prop] of Object.entries(dbProps)) {
+      if ((prop as any).type === "title") {
+        properties[key] = { title: [{ text: { content: title } }] };
+        break;
+      }
+    }
+
+    // Set status if provided
+    if (status) {
+      if (dbProps["Status"]?.type === "status") {
+        properties["Status"] = { status: { name: status } };
+      } else if (dbProps["Status"]?.type === "select") {
+        properties["Status"] = { select: { name: status } };
+      } else {
+        for (const [key, prop] of Object.entries(dbProps)) {
+          if ((prop as any).type === "status") {
+            properties[key] = { status: { name: status } };
+            break;
+          }
+          if ((prop as any).type === "select") {
+            properties[key] = { select: { name: status } };
+            break;
+          }
+        }
+      }
+    }
+
+    const page = await notion.pages.create({
+      parent: { database_id: databaseId },
+      properties,
+    }) as any;
+
+    const labels = getDatabaseLabels();
+    const dbTitle = (db.title || []).map((t: any) => t.plain_text).join("") || databaseId.slice(0, 6);
+    return NextResponse.json({
+      id: page.id,
+      title,
+      status: status || "Unknown",
+      databaseId,
+      database: labels[databaseId] || dbTitle,
+      databaseIcon: extractIcon(db.icon),
+      isInbox: databaseId === INBOX_DB || dbTitle.toLowerCase().includes("inbox"),
+      allAssigneeNames: [],
+      otherAssignees: [],
+      url: page.url,
+      createdTime: page.created_time,
+      lastEditedTime: page.last_edited_time,
+    });
+  } catch (error) {
+    console.error("POST task error", error);
+    return NextResponse.json({ error: "Failed to create task" }, { status: 500 });
+  }
 }
