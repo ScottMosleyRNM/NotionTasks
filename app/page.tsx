@@ -8,6 +8,7 @@ import {
   ChevronDown,
   Inbox,
   Layers,
+  Menu,
   Plus,
   RefreshCw,
   Search,
@@ -150,6 +151,7 @@ export default function Home() {
   const [composeDb, setComposeDb] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const mainRef = useRef<HTMLDivElement>(null);
   const touchStartY = useRef(0);
 
@@ -213,11 +215,11 @@ export default function Home() {
   const anytimeTasks = useMemo(() => nonInboxTasks.filter(t => !t.due), [nonInboxTasks]);
 
   const counts = useMemo(() => ({
-    inbox: inboxTasks.filter(t => !isDoneStatus(t.status)).length,
-    today: todayTasks.filter(t => !isDoneStatus(t.status)).length,
-    upcoming: upcomingTasks.filter(t => !isDoneStatus(t.status)).length,
-    anytime: anytimeTasks.filter(t => !isDoneStatus(t.status)).length,
-    delegated: delegatedTasks.filter(t => !isDoneStatus(t.status)).length,
+    inbox:     inboxTasks.filter(t => !isDoneStatus(t.status) && !!t.due).length,
+    today:     todayTasks.filter(t => !isDoneStatus(t.status)).length,
+    upcoming:  upcomingTasks.filter(t => !isDoneStatus(t.status)).length,
+    anytime:   0, // no due dates in this view, never show a count
+    delegated: delegatedTasks.filter(t => !isDoneStatus(t.status) && !!t.due).length,
   }), [inboxTasks, todayTasks, upcomingTasks, anytimeTasks, delegatedTasks]);
 
   const baseTasks = useMemo(() => {
@@ -379,7 +381,14 @@ export default function Home() {
         {/* Header */}
         <header className="flex-none bg-white px-5 md:px-8 pt-5 md:pt-8 pb-2">
           <div className="flex items-start justify-between gap-4">
-            <h1 className="text-[26px] font-bold leading-tight">{viewLabel}</h1>
+            <div className="flex items-center gap-2">
+              {/* Hamburger — mobile only */}
+              <button onClick={() => setDrawerOpen(true)}
+                className="md:hidden p-1.5 -ml-1 rounded-full text-stone-400 hover:bg-stone-100 transition-colors">
+                <Menu className="h-5 w-5" />
+              </button>
+              <h1 className="text-[26px] font-bold leading-tight">{viewLabel}</h1>
+            </div>
             <div className="flex items-center gap-1 pt-1">
               {isRefreshing && <RefreshCw className="h-3.5 w-3.5 animate-spin text-stone-400 md:hidden" />}
               <button onClick={() => { setShowSearch(v => !v); if (showSearch) setQuery(""); }}
@@ -434,18 +443,20 @@ export default function Home() {
         </main>
       </div>
 
-      {/* ── Mobile bottom nav ── */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur-md border-t border-stone-200 flex items-center">
-        {navItems.map(item => (
-          <MobileNavTab key={item.view} icon={item.mobileIcon} label={item.label}
-            count={counts[item.view]} active={navView === item.view}
-            onClick={() => { setNavView(item.view); setDbFilter(null); setSelectedTaskId(null); }} />
-        ))}
-      </nav>
+      {/* ── Mobile drawer ── */}
+      {drawerOpen && (
+        <MobileDrawer
+          navView={navView} dbFilter={dbFilter} counts={counts}
+          navItems={navItems} nonInboxDbs={nonInboxDbs} databases={databases}
+          onNav={(view) => { setNavView(view); setDbFilter(null); setSelectedTaskId(null); setDrawerOpen(false); }}
+          onSource={(id) => { setNavView("source"); setDbFilter(id); setSelectedTaskId(null); setDrawerOpen(false); }}
+          onClose={() => setDrawerOpen(false)}
+        />
+      )}
 
       {/* ── FAB ── */}
       <button onClick={() => setComposeOpen(true)}
-        className="fixed bottom-[76px] right-4 md:bottom-6 md:right-6 z-20 flex h-14 w-14 md:h-12 md:w-12 items-center justify-center rounded-full bg-blue-500 shadow-lg shadow-blue-500/30 text-white transition-all hover:bg-blue-600 active:scale-95">
+        className="fixed bottom-6 right-4 md:right-6 z-20 flex h-14 w-14 md:h-12 md:w-12 items-center justify-center rounded-full bg-blue-500 shadow-lg shadow-blue-500/30 text-white transition-all hover:bg-blue-600 active:scale-95">
         <Plus className="h-6 w-6 md:h-5 md:w-5" />
       </button>
 
@@ -493,22 +504,62 @@ function SidebarNavItem({ label, icon, count, active, onClick }: {
   );
 }
 
-// ─── MobileNavTab ─────────────────────────────────────────────────────────────
+// ─── MobileDrawer ─────────────────────────────────────────────────────────────
 
-function MobileNavTab({ icon, label, count, active, onClick }: {
-  icon: React.ReactNode; label: string; count: number; active: boolean; onClick: () => void;
+function MobileDrawer({ navView, dbFilter, counts, navItems, nonInboxDbs, databases, onNav, onSource, onClose }: {
+  navView: NavView; dbFilter: string | null;
+  counts: Record<string, number>;
+  navItems: { view: NavView; label: string; sidebarIcon: React.ReactNode }[];
+  nonInboxDbs: TaskDatabase[]; databases: TaskDatabase[];
+  onNav: (v: NavView) => void; onSource: (id: string) => void; onClose: () => void;
 }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { requestAnimationFrame(() => setMounted(true)); }, []);
+
   return (
-    <button onClick={onClick}
-      className={`flex flex-1 flex-col items-center gap-0.5 py-2 relative transition-colors ${active ? "text-blue-500" : "text-stone-400"}`}>
-      {icon}
-      <span className="text-[10px] font-medium">{label}</span>
-      {count > 0 && !active && (
-        <span className="absolute top-1.5 left-1/2 translate-x-1.5 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none">
-          {count > 99 ? "99+" : count}
-        </span>
-      )}
-    </button>
+    <div className="fixed inset-0 z-50 flex">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm"
+        style={{ opacity: mounted ? 1 : 0, transition: "opacity 0.25s" }}
+        onClick={onClose} />
+      {/* Drawer panel */}
+      <div className="relative flex flex-col w-72 max-w-[85vw] h-full bg-[#F0EDE8] shadow-2xl overflow-y-auto"
+        style={{ transform: mounted ? "translateX(0)" : "translateX(-100%)", transition: "transform 0.3s cubic-bezier(0.32,0.72,0,1)" }}>
+        {/* Close button */}
+        <div className="flex items-center justify-between px-4 pt-12 pb-2">
+          <span className="text-xs font-semibold uppercase tracking-widest text-[#B0AA9F]">Navigation</span>
+          <button onClick={onClose} className="p-1.5 rounded-full hover:bg-[#E5E0D8] text-[#B0AA9F] transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Nav items */}
+        <div className="px-3 pb-2">
+          {navItems.map(item => (
+            <SidebarNavItem key={item.view} label={item.label} icon={item.sidebarIcon}
+              count={counts[item.view] ?? 0} active={navView === item.view && !dbFilter}
+              onClick={() => onNav(item.view)} />
+          ))}
+        </div>
+
+        {/* Areas */}
+        {nonInboxDbs.length > 0 && (
+          <div className="mt-2 pt-3 border-t border-[#DDD8D0] px-3 pb-6">
+            <p className="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-[#B0AA9F]">Areas</p>
+            {nonInboxDbs.map(db => (
+              <button key={db.id}
+                onClick={() => onSource(db.id)}
+                className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-[13px] transition-colors ${
+                  navView === "source" && dbFilter === db.id ? "bg-white shadow-sm text-gray-900 font-medium" : "text-[#4A453D] hover:bg-[#E5E0D8]"
+                }`}>
+                <span className={`w-2 h-2 rounded-full shrink-0 ${getDbDotColor(db.id, databases)}`} />
+                <span className="truncate">{db.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
