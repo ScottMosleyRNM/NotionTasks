@@ -2,17 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Building2,
   Calendar,
   Check,
-  CheckSquare,
   ChevronDown,
   ChevronLeft,
-  Home as HomeIcon,
   Inbox,
   Layers,
   Menu,
-  MessageCircle,
   Plus,
   RefreshCw,
   Search,
@@ -130,20 +126,29 @@ function getPropValueDisplay(prop: any): string {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const DB_ICON_MAP: Record<string, { icon: React.ComponentType<{ className?: string }>, color: string }> = {
-  "Discussion": { icon: MessageCircle, color: "text-purple-500" },
-  "ELT": { icon: Building2, color: "text-orange-500" },
-  "Tasks": { icon: CheckSquare, color: "text-green-500" },
-  "Things": { icon: HomeIcon, color: "text-blue-500" },
+const DB_ICON_MAP: Record<string, { src: string; color: string }> = {
+  "Discussion": { src: "/icons/discussions.png", color: "text-purple-500" },
+  "ELT":        { src: "/icons/elt.png",         color: "text-orange-500" },
+  "Tasks":      { src: "/icons/tasks.png",        color: "text-green-500" },
+  "Things":     { src: "/icons/home.png",         color: "text-blue-500" },
 };
 
 function getDbIcon(dbName: string) {
-  return DB_ICON_MAP[dbName] ?? { icon: Layers, color: "text-stone-400" };
+  return DB_ICON_MAP[dbName] ?? null;
 }
 
 function DbIconBadge({ dbName, size = "sm" }: { dbName: string; size?: "sm" | "md" }) {
-  const { icon: Icon, color } = getDbIcon(dbName);
-  return <Icon className={`shrink-0 ${size === "md" ? "h-4 w-4" : "h-3.5 w-3.5"} ${color}`} />;
+  const icon = getDbIcon(dbName);
+  const px = size === "md" ? 18 : 14;
+  if (icon) {
+    return (
+      // mix-blend-mode: multiply makes white pixels transparent on light backgrounds
+      <img src={icon.src} width={px} height={px} alt={dbName}
+        className="shrink-0 object-contain"
+        style={{ mixBlendMode: "multiply" }} />
+    );
+  }
+  return <Layers className={`shrink-0 ${size === "md" ? "h-4 w-4" : "h-3.5 w-3.5"} text-stone-400`} />;
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -395,7 +400,7 @@ export default function Home() {
                   navView === "source" && dbFilter === thingsDb.id && areaFilter === area ? "bg-white shadow-sm text-gray-900 font-medium" : "text-[#4A453D] hover:bg-[#E5E0D8]"
                 }`}
               >
-                <HomeIcon className="h-3.5 w-3.5 shrink-0 text-blue-400" />
+                <DbIconBadge dbName="Things" />
                 <span className="truncate">{area}</span>
               </button>
             ))}
@@ -628,7 +633,7 @@ function MobileNavPage({ navView, dbFilter, areaFilter, counts, navItems, nonInb
                   active ? "bg-white shadow-sm" : "active:bg-[#E5E0D8]"
                 }`}>
                 <div className="w-10 h-10 rounded-xl bg-white/60 flex items-center justify-center shrink-0">
-                  <HomeIcon className="h-5 w-5 text-blue-400" />
+                  <DbIconBadge dbName="Things" size="md" />
                 </div>
                 <span className={`flex-1 text-left text-[17px] font-medium ${active ? "text-gray-900" : "text-[#4A453D]"}`}>
                   {area}
