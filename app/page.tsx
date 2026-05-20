@@ -210,7 +210,7 @@ export default function Home() {
   const assignedNonInbox = useMemo(() => tasks.filter(t => !t.isInbox && t.isAssignedToMe), [tasks]);
   const nonInboxTasks = useMemo(() => tasks.filter(t => !t.isInbox), [tasks]);
   const delegatedTasks = useMemo(() => tasks.filter(t => !t.isInbox && t.isCreatedByMe && !t.isAssignedToMe), [tasks]);
-  const todayTasks = useMemo(() => nonInboxTasks.filter(t => t.due && (isToday(t.due, today) || isOverdue(t.due, today))), [nonInboxTasks, today]);
+  const todayTasks = useMemo(() => assignedNonInbox.filter(t => t.due && (isToday(t.due, today) || isOverdue(t.due, today))), [assignedNonInbox, today]);
   const upcomingTasks = useMemo(() => nonInboxTasks.filter(t => t.due && !isToday(t.due, today) && !isOverdue(t.due, today)), [nonInboxTasks, today]);
   const anytimeTasks = useMemo(() => nonInboxTasks.filter(t => !t.due), [nonInboxTasks]);
 
@@ -688,7 +688,7 @@ function TaskRow({ task, databases, statuses, showDb, today, onClick, onPatch }:
       </div>
       {/* Content */}
       <div className="flex items-center gap-3 py-2.5 px-1 -mx-1 rounded-lg cursor-pointer hover:bg-stone-50 active:bg-stone-100 transition-colors"
-        style={{ transform: `translateX(${swipeX}px)`, transition: swipeX === 0 ? "transform 0.25s ease" : "none" }}
+        style={{ transform: swipeX === 0 ? "none" : `translateX(${swipeX}px)`, transition: swipeX === 0 ? "transform 0.25s ease" : "none" }}
         onClick={onClick}>
         <StatusCircle status={task.status} statuses={statuses}
           onStatusChange={s => onPatch(task.id, { status: s })} />
