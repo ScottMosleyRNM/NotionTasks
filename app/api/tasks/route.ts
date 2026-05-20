@@ -28,6 +28,10 @@ function getDue(props: any) {
 }
 
 function getStatus(props: any) {
+  // "Checkbox" boolean field used by the Things database for completion tracking
+  if (props?.["Checkbox"]?.type === "checkbox") {
+    return props["Checkbox"].checkbox ? "Done" : "Not started";
+  }
   if (props?.["Status"]?.status?.name) return props["Status"].status.name;
   if (props?.["Status"]?.select?.name) return props["Status"].select.name;
   for (const key of Object.keys(props || {})) {
@@ -36,6 +40,14 @@ function getStatus(props: any) {
     if (prop?.type === "select" && prop.select?.name) return prop.select.name;
   }
   return "Unknown";
+}
+
+function getArea(props: any): string | undefined {
+  if (props?.["Area"]?.type === "select") return props["Area"].select?.name || undefined;
+  if (props?.["Area"]?.type === "multi_select" && props["Area"].multi_select?.length) {
+    return props["Area"].multi_select[0].name;
+  }
+  return undefined;
 }
 
 function getAllAssigneeNames(props: any): string[] {
@@ -131,6 +143,7 @@ export async function GET() {
           title: getTitle(props),
           due: getDue(props),
           status: getStatus(props),
+          area: getArea(props),
           allAssigneeNames: getAllAssigneeNames(props),
           otherAssignees: getOtherAssigneeNames(props, myUserId || undefined),
           databaseId: dbId,

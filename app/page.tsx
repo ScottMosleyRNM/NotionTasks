@@ -2,13 +2,17 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowUpRight,
+  Building2,
   Calendar,
   Check,
+  CheckSquare,
   ChevronDown,
+  ChevronLeft,
+  Home,
   Inbox,
   Layers,
   Menu,
+  MessageCircle,
   Plus,
   RefreshCw,
   Search,
@@ -26,6 +30,7 @@ type Task = {
   title: string;
   due?: string;
   status: string;
+  area?: string;
   databaseId: string;
   database: string;
   databaseIcon?: string;
@@ -45,6 +50,7 @@ type TaskDatabase = {
   name: string;
   icon?: string;
   statuses: string[];
+  areas: string[];
   isInbox: boolean;
 };
 
@@ -124,15 +130,20 @@ function getPropValueDisplay(prop: any): string {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const DB_DOT_COLORS = [
-  "bg-blue-400", "bg-emerald-400", "bg-orange-400",
-  "bg-purple-400", "bg-rose-400", "bg-indigo-400",
-  "bg-amber-500", "bg-teal-400",
-];
+const DB_ICON_MAP: Record<string, { icon: React.ComponentType<{ className?: string }>, color: string }> = {
+  "Discussion": { icon: MessageCircle, color: "text-purple-500" },
+  "ELT": { icon: Building2, color: "text-orange-500" },
+  "Tasks": { icon: CheckSquare, color: "text-green-500" },
+  "Things": { icon: Home, color: "text-blue-500" },
+};
 
-function getDbDotColor(dbId: string, databases: TaskDatabase[]) {
-  const idx = databases.findIndex(d => d.id === dbId);
-  return DB_DOT_COLORS[Math.max(0, idx) % DB_DOT_COLORS.length];
+function getDbIcon(dbName: string) {
+  return DB_ICON_MAP[dbName] ?? { icon: Layers, color: "text-stone-400" };
+}
+
+function DbIconBadge({ dbName, size = "sm" }: { dbName: string; size?: "sm" | "md" }) {
+  const { icon: Icon, color } = getDbIcon(dbName);
+  return <Icon className={`shrink-0 ${size === "md" ? "h-4 w-4" : "h-3.5 w-3.5"} ${color}`} />;
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -151,7 +162,8 @@ export default function Home() {
   const [composeDb, setComposeDb] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [showMobileNav, setShowMobileNav] = useState(false);
+  const [areaFilter, setAreaFilter] = useState<string | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
   const touchStartY = useRef(0);
 
@@ -175,7 +187,7 @@ export default function Home() {
       .then(r => r.json())
       .then((data: TaskDatabase[]) => {
         if (Array.isArray(data)) {
-          setDatabases(data);
+          setDatabases(data.map((d: any) => ({ ...d, areas: d.areas ?? [] })));
           try { localStorage.setItem("notion-dbs-cache", JSON.stringify(data)); } catch {}
           setComposeDb(defaultInboxId(data));
         }
@@ -186,7 +198,7 @@ export default function Home() {
 
   useEffect(() => {
     try { const c = localStorage.getItem("notion-tasks-cache"); if (c) { const p = JSON.parse(c); if (Array.isArray(p)) { setTasks(p); setLoading(false); } } } catch {}
-    try { const c = localStorage.getItem("notion-dbs-cache"); if (c) { const p: TaskDatabase[] = JSON.parse(c); if (Array.isArray(p)) { setDatabases(p); setComposeDb(defaultInboxId(p)); } } } catch {}
+    try { const c = localStorage.getItem("notion-dbs-cache"); if (c) { const p: TaskDatabase[] = JSON.parse(c); if (Array.isArray(p)) { setDatabases(p.map(d => ({ ...d, areas: d.areas ?? [] }))); setComposeDb(defaultInboxId(p)); } } } catch {}
     doRefresh();
   }, []); // eslint-disable-line
 
@@ -229,10 +241,14 @@ export default function Home() {
       case "upcoming": return upcomingTasks;
       case "anytime": return anytimeTasks;
       case "delegated": return delegatedTasks;
-      case "source": return dbFilter ? tasks.filter(t => t.databaseId === dbFilter) : [];
+      case "source": {
+        let src = dbFilter ? tasks.filter(t => t.databaseId === dbFilter) : [];
+        if (areaFilter) src = src.filter(t => t.area === areaFilter);
+        return src;
+      }
       default: return assignedNonInbox;
     }
-  }, [navView, inboxTasks, todayTasks, upcomingTasks, anytimeTasks, delegatedTasks, assignedNonInbox, tasks, dbFilter]);
+  }, [navView, inboxTasks, todayTasks, upcomingTasks, anytimeTasks, delegatedTasks, assignedNonInbox, tasks, dbFilter, areaFilter]);
 
   const filteredTasks = useMemo(() => {
     let ts = hideDone ? baseTasks.filter(t => !isDoneStatus(t.status) && !isCancelledStatus(t.status)) : baseTasks;
@@ -318,7 +334,10 @@ export default function Home() {
   const selectedTask = tasks.find(t => t.id === selectedTaskId) ?? null;
   const nonInboxDbs = databases.filter(d => !d.isInbox);
   const sourceDbName = dbFilter ? databases.find(d => d.id === dbFilter)?.name ?? "" : "";
-  const viewLabel = navView === "source" ? sourceDbName : { inbox: "Inbox", today: "Today", upcoming: "Upcoming", anytime: "Anytime", delegated: "Delegated" }[navView as Exclude<NavView, "source">];
+  const thingsDb = databases.find(d => d.name === "Things") ?? null;
+  const viewLabel = navView === "source"
+    ? (areaFilter ?? sourceDbName)
+    : { inbox: "Inbox", today: "Today", upcoming: "Upcoming", anytime: "Anytime", delegated: "Delegated" }[navView as Exclude<NavView, "source">];
 
   const navItems: { view: NavView; label: string; mobileIcon: React.ReactNode; sidebarIcon: React.ReactNode }[] = [
     { view: "inbox", label: "Inbox",
@@ -346,22 +365,38 @@ export default function Home() {
         <div className="pt-10 pb-2 px-3">
           {navItems.map(item => (
             <SidebarNavItem key={item.view} label={item.label} icon={item.sidebarIcon}
-              count={counts[item.view]} active={navView === item.view}
-              onClick={() => { setNavView(item.view); setDbFilter(null); setQuery(""); }} />
+              count={counts[item.view]} active={navView === item.view && !dbFilter}
+              onClick={() => { setNavView(item.view); setDbFilter(null); setAreaFilter(null); setQuery(""); }} />
           ))}
         </div>
         {nonInboxDbs.length > 0 && (
           <div className="mt-2 pt-3 border-t border-[#DDD8D0] px-3 pb-4">
-            <p className="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-[#B0AA9F]">Areas</p>
+            <p className="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-[#B0AA9F]">Databases</p>
             {nonInboxDbs.map((db) => (
               <button key={db.id}
-                onClick={() => { setNavView("source"); setDbFilter(db.id); setQuery(""); }}
+                onClick={() => { setNavView("source"); setDbFilter(db.id); setAreaFilter(null); setQuery(""); }}
                 className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-[13px] transition-colors ${
-                  navView === "source" && dbFilter === db.id ? "bg-white shadow-sm text-gray-900 font-medium" : "text-[#4A453D] hover:bg-[#E5E0D8]"
+                  navView === "source" && dbFilter === db.id && !areaFilter ? "bg-white shadow-sm text-gray-900 font-medium" : "text-[#4A453D] hover:bg-[#E5E0D8]"
                 }`}
               >
-                <span className={`w-2 h-2 rounded-full shrink-0 ${getDbDotColor(db.id, databases)}`} />
+                <DbIconBadge dbName={db.name} />
                 <span className="truncate">{db.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {thingsDb && thingsDb.areas.length > 0 && (
+          <div className="pt-3 border-t border-[#DDD8D0] px-3 pb-4">
+            <p className="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-[#B0AA9F]">Areas</p>
+            {thingsDb.areas.map(area => (
+              <button key={area}
+                onClick={() => { setNavView("source"); setDbFilter(thingsDb.id); setAreaFilter(area); setQuery(""); }}
+                className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-[13px] transition-colors ${
+                  navView === "source" && dbFilter === thingsDb.id && areaFilter === area ? "bg-white shadow-sm text-gray-900 font-medium" : "text-[#4A453D] hover:bg-[#E5E0D8]"
+                }`}
+              >
+                <Home className="h-3.5 w-3.5 shrink-0 text-blue-400" />
+                <span className="truncate">{area}</span>
               </button>
             ))}
           </div>
@@ -375,15 +410,28 @@ export default function Home() {
         </div>
       </aside>
 
+      {/* ── Mobile Nav Page (full-screen, mobile only) ── */}
+      {showMobileNav && (
+        <MobileNavPage
+          navView={navView} dbFilter={dbFilter} areaFilter={areaFilter} counts={counts}
+          navItems={navItems} nonInboxDbs={nonInboxDbs} databases={databases}
+          thingsDb={thingsDb}
+          onNav={(view) => { setNavView(view); setDbFilter(null); setAreaFilter(null); setSelectedTaskId(null); setShowMobileNav(false); }}
+          onSource={(id) => { setNavView("source"); setDbFilter(id); setAreaFilter(null); setSelectedTaskId(null); setShowMobileNav(false); }}
+          onArea={(dbId, area) => { setNavView("source"); setDbFilter(dbId); setAreaFilter(area); setSelectedTaskId(null); setShowMobileNav(false); }}
+          onClose={() => setShowMobileNav(false)}
+        />
+      )}
+
       {/* ── Main content ── */}
-      <div className="flex flex-1 flex-col min-w-0">
+      <div className={`flex flex-1 flex-col min-w-0 ${showMobileNav ? "hidden md:flex" : ""}`}>
 
         {/* Header */}
         <header className="flex-none bg-white px-5 md:px-8 pt-5 md:pt-8 pb-2">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-center gap-2">
               {/* Hamburger — mobile only */}
-              <button onClick={() => setDrawerOpen(true)}
+              <button onClick={() => setShowMobileNav(true)}
                 className="md:hidden p-1.5 -ml-1 rounded-full text-stone-400 hover:bg-stone-100 transition-colors">
                 <Menu className="h-5 w-5" />
               </button>
@@ -431,7 +479,7 @@ export default function Home() {
                     </div>
                   )}
                   {group.tasks.map(task => (
-                    <TaskRow key={task.id} task={task} databases={databases}
+                    <TaskRow key={task.id} task={task}
                       statuses={databases.find(d => d.id === task.databaseId)?.statuses ?? [task.status]}
                       showDb={navView !== "inbox" && navView !== "source"} today={today}
                       onClick={() => setSelectedTaskId(task.id)} onPatch={patchTask} />
@@ -442,17 +490,6 @@ export default function Home() {
           )}
         </main>
       </div>
-
-      {/* ── Mobile drawer ── */}
-      {drawerOpen && (
-        <MobileDrawer
-          navView={navView} dbFilter={dbFilter} counts={counts}
-          navItems={navItems} nonInboxDbs={nonInboxDbs} databases={databases}
-          onNav={(view) => { setNavView(view); setDbFilter(null); setSelectedTaskId(null); setDrawerOpen(false); }}
-          onSource={(id) => { setNavView("source"); setDbFilter(id); setSelectedTaskId(null); setDrawerOpen(false); }}
-          onClose={() => setDrawerOpen(false)}
-        />
-      )}
 
       {/* ── FAB ── */}
       <button onClick={() => setComposeOpen(true)}
@@ -469,7 +506,7 @@ export default function Home() {
       {selectedTask && (
         <TaskDetailPanel task={selectedTask}
           database={databases.find(d => d.id === selectedTask.databaseId) ?? null}
-          databases={databases} onClose={() => setSelectedTaskId(null)} onPatch={patchTask} />
+          onClose={() => setSelectedTaskId(null)} onPatch={patchTask} />
       )}
     </div>
   );
@@ -504,61 +541,103 @@ function SidebarNavItem({ label, icon, count, active, onClick }: {
   );
 }
 
-// ─── MobileDrawer ─────────────────────────────────────────────────────────────
+// ─── MobileNavPage ────────────────────────────────────────────────────────────
 
-function MobileDrawer({ navView, dbFilter, counts, navItems, nonInboxDbs, databases, onNav, onSource, onClose }: {
-  navView: NavView; dbFilter: string | null;
+function MobileNavPage({ navView, dbFilter, areaFilter, counts, navItems, nonInboxDbs, databases, thingsDb, onNav, onSource, onArea, onClose }: {
+  navView: NavView; dbFilter: string | null; areaFilter: string | null;
   counts: Record<string, number>;
-  navItems: { view: NavView; label: string; sidebarIcon: React.ReactNode }[];
+  navItems: { view: NavView; label: string; mobileIcon: React.ReactNode; sidebarIcon: React.ReactNode }[];
   nonInboxDbs: TaskDatabase[]; databases: TaskDatabase[];
-  onNav: (v: NavView) => void; onSource: (id: string) => void; onClose: () => void;
+  thingsDb: TaskDatabase | null;
+  onNav: (v: NavView) => void; onSource: (id: string) => void; onArea: (dbId: string, area: string) => void; onClose: () => void;
 }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { requestAnimationFrame(() => setMounted(true)); }, []);
+  const navIconBgs: Record<NavView, string> = {
+    inbox: "bg-blue-500", today: "bg-yellow-400", upcoming: "bg-red-400",
+    anytime: "bg-teal-500", delegated: "bg-stone-400", source: "bg-stone-200",
+  };
 
   return (
-    <div className="fixed inset-0 z-50 flex">
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm"
-        style={{ opacity: mounted ? 1 : 0, transition: "opacity 0.25s" }}
-        onClick={onClose} />
-      {/* Drawer panel */}
-      <div className="relative flex flex-col w-72 max-w-[85vw] h-full bg-[#F0EDE8] shadow-2xl overflow-y-auto"
-        style={{ transform: mounted ? "translateX(0)" : "translateX(-100%)", transition: "transform 0.3s cubic-bezier(0.32,0.72,0,1)" }}>
-        {/* Close button */}
-        <div className="flex items-center justify-between px-4 pt-12 pb-2">
-          <span className="text-xs font-semibold uppercase tracking-widest text-[#B0AA9F]">Navigation</span>
-          <button onClick={onClose} className="p-1.5 rounded-full hover:bg-[#E5E0D8] text-[#B0AA9F] transition-colors">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* Nav items */}
-        <div className="px-3 pb-2">
-          {navItems.map(item => (
-            <SidebarNavItem key={item.view} label={item.label} icon={item.sidebarIcon}
-              count={counts[item.view] ?? 0} active={navView === item.view && !dbFilter}
-              onClick={() => onNav(item.view)} />
-          ))}
-        </div>
-
-        {/* Areas */}
-        {nonInboxDbs.length > 0 && (
-          <div className="mt-2 pt-3 border-t border-[#DDD8D0] px-3 pb-6">
-            <p className="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-[#B0AA9F]">Areas</p>
-            {nonInboxDbs.map(db => (
-              <button key={db.id}
-                onClick={() => onSource(db.id)}
-                className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-[13px] transition-colors ${
-                  navView === "source" && dbFilter === db.id ? "bg-white shadow-sm text-gray-900 font-medium" : "text-[#4A453D] hover:bg-[#E5E0D8]"
-                }`}>
-                <span className={`w-2 h-2 rounded-full shrink-0 ${getDbDotColor(db.id, databases)}`} />
-                <span className="truncate">{db.name}</span>
-              </button>
-            ))}
-          </div>
-        )}
+    <div className="flex-1 bg-[#F0EDE8] flex flex-col overflow-y-auto">
+      {/* Back button */}
+      <div className="flex items-center px-4 pt-14 pb-5">
+        <button onClick={onClose}
+          className="flex items-center gap-1 text-blue-500 active:opacity-60 transition-opacity">
+          <ChevronLeft className="h-5 w-5" />
+          <span className="text-[17px] font-medium">Back</span>
+        </button>
       </div>
+
+      {/* Primary nav items */}
+      <div className="px-4 pb-3">
+        {navItems.map(item => {
+          const active = navView === item.view && !dbFilter;
+          const cnt = counts[item.view as string] ?? 0;
+          return (
+            <button key={item.view} onClick={() => onNav(item.view)}
+              className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl mb-1.5 transition-colors ${
+                active ? "bg-white shadow-sm" : "active:bg-[#E5E0D8]"
+              }`}>
+              <div className={`w-10 h-10 rounded-xl ${navIconBgs[item.view]} flex items-center justify-center shrink-0`}>
+                <span className="text-white [&>svg]:h-5 [&>svg]:w-5">{item.mobileIcon}</span>
+              </div>
+              <span className={`flex-1 text-left text-[17px] font-medium ${active ? "text-gray-900" : "text-[#4A453D]"}`}>
+                {item.label}
+              </span>
+              {cnt > 0 && (
+                <span className={`text-[15px] font-semibold tabular-nums ${active ? "text-stone-500" : "text-[#B0AA9F]"}`}>
+                  {cnt}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Databases */}
+      {nonInboxDbs.length > 0 && (
+        <div className="mt-1 pt-4 border-t border-[#DDD8D0] px-4 pb-3">
+          <p className="px-1 mb-2 text-[11px] font-semibold uppercase tracking-widest text-[#B0AA9F]">Databases</p>
+          {nonInboxDbs.map(db => {
+            const active = navView === "source" && dbFilter === db.id && !areaFilter;
+            return (
+              <button key={db.id} onClick={() => onSource(db.id)}
+                className={`w-full flex items-center gap-4 px-4 py-3 rounded-2xl mb-1 transition-colors ${
+                  active ? "bg-white shadow-sm" : "active:bg-[#E5E0D8]"
+                }`}>
+                <div className="w-10 h-10 rounded-xl bg-white/60 flex items-center justify-center shrink-0">
+                  <DbIconBadge dbName={db.name} size="md" />
+                </div>
+                <span className={`flex-1 text-left text-[17px] font-medium ${active ? "text-gray-900" : "text-[#4A453D]"}`}>
+                  {db.name}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Areas (from Things DB) */}
+      {thingsDb && thingsDb.areas.length > 0 && (
+        <div className="mt-1 pt-4 border-t border-[#DDD8D0] px-4 pb-6">
+          <p className="px-1 mb-2 text-[11px] font-semibold uppercase tracking-widest text-[#B0AA9F]">Areas</p>
+          {thingsDb.areas.map(area => {
+            const active = navView === "source" && dbFilter === thingsDb.id && areaFilter === area;
+            return (
+              <button key={area} onClick={() => onArea(thingsDb.id, area)}
+                className={`w-full flex items-center gap-4 px-4 py-3 rounded-2xl mb-1 transition-colors ${
+                  active ? "bg-white shadow-sm" : "active:bg-[#E5E0D8]"
+                }`}>
+                <div className="w-10 h-10 rounded-xl bg-white/60 flex items-center justify-center shrink-0">
+                  <Home className="h-5 w-5 text-blue-400" />
+                </div>
+                <span className={`flex-1 text-left text-[17px] font-medium ${active ? "text-gray-900" : "text-[#4A453D]"}`}>
+                  {area}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -624,15 +703,14 @@ function StatusCircle({ status, statuses, onStatusChange }: {
 
 // ─── TaskRow ──────────────────────────────────────────────────────────────────
 
-function TaskRow({ task, databases, statuses, showDb, today, onClick, onPatch }: {
-  task: Task; databases: TaskDatabase[]; statuses: string[];
+function TaskRow({ task, statuses, showDb, today, onClick, onPatch }: {
+  task: Task; statuses: string[];
   showDb: boolean; today: string;
   onClick: () => void; onPatch: (id: string, updates: Partial<Task>) => void;
 }) {
   const done = isDoneStatus(task.status);
   const overdue = task.due && isOverdue(task.due, today) && !done;
   const dueToday = task.due && isToday(task.due, today) && !done;
-  const dotColor = showDb ? getDbDotColor(task.databaseId, databases) : null;
 
   const rowRef = useRef<HTMLDivElement>(null);
   const [swipeX, setSwipeX] = useState(0);
@@ -701,9 +779,7 @@ function TaskRow({ task, databases, statuses, showDb, today, onClick, onPatch }:
               overdue ? "text-red-500" : dueToday ? "text-amber-600" : "text-stone-400"
             }`}>{formatDate(task.due)}</span>
           )}
-          {showDb && dotColor && (
-            <span className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
-          )}
+          {showDb && <DbIconBadge dbName={task.database} />}
         </div>
       </div>
     </div>
@@ -712,8 +788,8 @@ function TaskRow({ task, databases, statuses, showDb, today, onClick, onPatch }:
 
 // ─── TaskDetailPanel ──────────────────────────────────────────────────────────
 
-function TaskDetailPanel({ task, database, databases, onClose, onPatch }: {
-  task: Task; database: TaskDatabase | null; databases: TaskDatabase[];
+function TaskDetailPanel({ task, database, onClose, onPatch }: {
+  task: Task; database: TaskDatabase | null;
   onClose: () => void; onPatch: (id: string, updates: Partial<Task>) => void;
 }) {
   const [detail, setDetail] = useState<TaskDetail | null>(null);
@@ -745,7 +821,6 @@ function TaskDetailPanel({ task, database, databases, onClose, onPatch }: {
   }
 
   const statuses = database?.statuses || [task.status];
-  const dotColor = getDbDotColor(task.databaseId, databases);
   const allProps = Object.entries((detail?.page as any)?.properties || {})
     .map(([key, value]: any) => ({ key, value: getPropValueDisplay(value) }))
     .filter(p => p.value);
@@ -786,7 +861,7 @@ function TaskDetailPanel({ task, database, databases, onClose, onPatch }: {
               ref={el => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } }} />
 
             <div className="flex items-center gap-1.5 mt-1.5 mb-4">
-              <span className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
+              <DbIconBadge dbName={task.database} />
               <span className="text-sm text-stone-500">{task.database}</span>
             </div>
 

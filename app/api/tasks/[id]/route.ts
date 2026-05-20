@@ -1,6 +1,11 @@
 import { notion } from "@/lib/notion";
 import { NextResponse } from "next/server";
 
+function isDoneStatus(s: string) {
+  const l = s.toLowerCase();
+  return l.includes("done") || l.includes("complete") || l.includes("finish") || l.includes("closed");
+}
+
 function richTextToPlain(arr: any[] | undefined) {
   if (!Array.isArray(arr)) return "";
   return arr.map((t) => t?.plain_text || "").join("");
@@ -56,34 +61,38 @@ export async function PATCH(
     const properties: Record<string, any> = {};
 
     if (body.status !== undefined) {
-      let statusKey = "Status";
-      let statusType: "status" | "select" = "status";
-
-      if (props["Status"]?.type === "status") {
-        statusKey = "Status";
-        statusType = "status";
-      } else if (props["Status"]?.type === "select") {
-        statusKey = "Status";
-        statusType = "select";
+      if (props["Checkbox"]?.type === "checkbox") {
+        properties["Checkbox"] = { checkbox: isDoneStatus(body.status) };
       } else {
-        for (const [key, prop] of Object.entries(props)) {
-          if ((prop as any).type === "status") {
-            statusKey = key;
-            statusType = "status";
-            break;
-          }
-          if ((prop as any).type === "select") {
-            statusKey = key;
-            statusType = "select";
-            break;
+        let statusKey = "Status";
+        let statusType: "status" | "select" = "status";
+
+        if (props["Status"]?.type === "status") {
+          statusKey = "Status";
+          statusType = "status";
+        } else if (props["Status"]?.type === "select") {
+          statusKey = "Status";
+          statusType = "select";
+        } else {
+          for (const [key, prop] of Object.entries(props)) {
+            if ((prop as any).type === "status") {
+              statusKey = key;
+              statusType = "status";
+              break;
+            }
+            if ((prop as any).type === "select") {
+              statusKey = key;
+              statusType = "select";
+              break;
+            }
           }
         }
-      }
 
-      properties[statusKey] =
-        statusType === "status"
-          ? { status: { name: body.status } }
-          : { select: { name: body.status } };
+        properties[statusKey] =
+          statusType === "status"
+            ? { status: { name: body.status } }
+            : { select: { name: body.status } };
+      }
     }
 
     if (body.due !== undefined) {

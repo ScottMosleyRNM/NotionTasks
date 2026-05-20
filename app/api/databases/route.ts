@@ -17,6 +17,7 @@ export async function GET() {
     name: string;
     icon?: string;
     statuses: string[];
+    areas: string[];
     isInbox: boolean;
   }[] = [];
 
@@ -27,10 +28,13 @@ export async function GET() {
       // Extract status options from schema
       const statuses: string[] = [];
       for (const prop of Object.values(db.properties || {}) as any[]) {
+        if (prop.name === "Checkbox" && prop.type === "checkbox") {
+          statuses.push("Not started", "Done");
+          break;
+        }
         if (prop.type === "status") {
           const groups: any[] = prop.status?.groups || [];
           const options: any[] = prop.status?.options || [];
-          // Prefer options ordered by group (not started → in progress → done)
           if (groups.length > 0) {
             for (const group of groups) {
               for (const optionId of group.option_ids || []) {
@@ -49,6 +53,19 @@ export async function GET() {
         }
       }
 
+      // Extract Area options (for Things-style area navigation)
+      const areas: string[] = [];
+      for (const prop of Object.values(db.properties || {}) as any[]) {
+        if (prop.name === "Area" && prop.type === "select") {
+          areas.push(...(prop.select?.options || []).map((o: any) => o.name).filter(Boolean));
+          break;
+        }
+        if (prop.name === "Area" && prop.type === "multi_select") {
+          areas.push(...(prop.multi_select?.options || []).map((o: any) => o.name).filter(Boolean));
+          break;
+        }
+      }
+
       // DB title from Notion, overridden by label config
       const notionTitle = (db.title || []).map((t: any) => t.plain_text).join("") || dbId.slice(0, 6);
 
@@ -57,6 +74,7 @@ export async function GET() {
         name: labels[dbId] || notionTitle,
         icon: extractIcon(db.icon),
         statuses,
+        areas,
         isInbox: dbId === INBOX_DB || notionTitle.toLowerCase().includes("inbox"),
       });
     } catch (error) {
