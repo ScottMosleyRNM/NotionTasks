@@ -518,13 +518,24 @@ function StatusCircle({ status, statuses, onStatusChange }: {
   status: string; statuses: string[]; onStatusChange: (s: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [dropPos, setDropPos] = useState({ top: 0, left: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
   const done = isDoneStatus(status);
   const inProgress = !done && isInProgressStatus(status);
   const cancelled = !done && isCancelledStatus(status);
 
+  function handleClick(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setDropPos({ top: r.bottom + 6, left: r.left });
+    }
+    setOpen(v => !v);
+  }
+
   return (
     <div className="relative shrink-0" onClick={e => e.stopPropagation()}>
-      <button onClick={() => setOpen(v => !v)}
+      <button ref={btnRef} onClick={handleClick}
         className={`flex h-[22px] w-[22px] items-center justify-center rounded-full border-2 transition-all duration-150 active:scale-90 ${
           done ? "border-stone-300 bg-stone-300" :
           inProgress ? "border-blue-400 bg-blue-50" :
@@ -538,9 +549,10 @@ function StatusCircle({ status, statuses, onStatusChange }: {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-8 z-50 min-w-[160px] overflow-hidden rounded-xl bg-white border border-stone-200 shadow-xl py-1">
+          <div className="fixed z-50 min-w-[160px] overflow-hidden rounded-xl bg-white border border-stone-200 shadow-xl py-1"
+            style={{ top: dropPos.top, left: dropPos.left }}>
             {statuses.map(s => (
-              <button key={s} onClick={() => { onStatusChange(s); setOpen(false); }}
+              <button key={s} onClick={(e) => { e.stopPropagation(); onStatusChange(s); setOpen(false); }}
                 className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors hover:bg-stone-50 ${
                   s === status ? "font-semibold text-gray-900" : "text-stone-600"
                 }`}>
