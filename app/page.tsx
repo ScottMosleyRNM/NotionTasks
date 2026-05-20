@@ -127,10 +127,10 @@ function getPropValueDisplay(prop: any): string {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const DB_ICON_MAP: Record<string, { src: string; color: string }> = {
-  "Discussion": { src: "/icons/discussions.png", color: "text-purple-500" },
-  "ELT":        { src: "/icons/elt.png",         color: "text-orange-500" },
-  "Tasks":      { src: "/icons/tasks.png",        color: "text-green-500" },
-  "Things":     { src: "/icons/home.png",         color: "text-blue-500" },
+  "Discussion": { src: "/icons/discussion.png", color: "text-purple-500" },
+  "ELT":        { src: "/icons/elt.png",        color: "text-orange-500" },
+  "Tasks":      { src: "/icons/task.png",        color: "text-green-500" },
+  "Things":     { src: "/icons/home.png",        color: "text-blue-500" },
 };
 
 function getDbIcon(dbName: string) {
