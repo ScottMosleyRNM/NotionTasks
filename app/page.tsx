@@ -8,7 +8,7 @@ import {
   CheckSquare,
   ChevronDown,
   ChevronLeft,
-  Home,
+  Home as HomeIcon,
   Inbox,
   Layers,
   Menu,
@@ -134,7 +134,7 @@ const DB_ICON_MAP: Record<string, { icon: React.ComponentType<{ className?: stri
   "Discussion": { icon: MessageCircle, color: "text-purple-500" },
   "ELT": { icon: Building2, color: "text-orange-500" },
   "Tasks": { icon: CheckSquare, color: "text-green-500" },
-  "Things": { icon: Home, color: "text-blue-500" },
+  "Things": { icon: HomeIcon, color: "text-blue-500" },
 };
 
 function getDbIcon(dbName: string) {
@@ -395,7 +395,7 @@ export default function Home() {
                   navView === "source" && dbFilter === thingsDb.id && areaFilter === area ? "bg-white shadow-sm text-gray-900 font-medium" : "text-[#4A453D] hover:bg-[#E5E0D8]"
                 }`}
               >
-                <Home className="h-3.5 w-3.5 shrink-0 text-blue-400" />
+                <HomeIcon className="h-3.5 w-3.5 shrink-0 text-blue-400" />
                 <span className="truncate">{area}</span>
               </button>
             ))}
@@ -628,7 +628,7 @@ function MobileNavPage({ navView, dbFilter, areaFilter, counts, navItems, nonInb
                   active ? "bg-white shadow-sm" : "active:bg-[#E5E0D8]"
                 }`}>
                 <div className="w-10 h-10 rounded-xl bg-white/60 flex items-center justify-center shrink-0">
-                  <Home className="h-5 w-5 text-blue-400" />
+                  <HomeIcon className="h-5 w-5 text-blue-400" />
                 </div>
                 <span className={`flex-1 text-left text-[17px] font-medium ${active ? "text-gray-900" : "text-[#4A453D]"}`}>
                   {area}
