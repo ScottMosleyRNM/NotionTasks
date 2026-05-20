@@ -129,8 +129,8 @@ function getPropValueDisplay(prop: any): string {
 const DB_ICON_MAP: { match: string; src: string }[] = [
   { match: "discussion", src: "/icons/discussion.png" },
   { match: "elt",        src: "/icons/elt.png" },
+  { match: "thing",      src: "/icons/home.png" },  // check before "task"
   { match: "task",       src: "/icons/task.png" },
-  { match: "thing",      src: "/icons/home.png" },
 ];
 
 function getDbIcon(dbName: string): string | null {

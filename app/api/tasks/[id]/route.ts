@@ -61,38 +61,34 @@ export async function PATCH(
     const properties: Record<string, any> = {};
 
     if (body.status !== undefined) {
-      if (props["Checkbox"]?.type === "checkbox") {
-        properties["Checkbox"] = { checkbox: isDoneStatus(body.status) };
-      } else {
-        let statusKey = "Status";
-        let statusType: "status" | "select" = "status";
+      let statusKey = "Status";
+      let statusType: "status" | "select" = "status";
 
-        if (props["Status"]?.type === "status") {
-          statusKey = "Status";
-          statusType = "status";
-        } else if (props["Status"]?.type === "select") {
-          statusKey = "Status";
-          statusType = "select";
-        } else {
-          for (const [key, prop] of Object.entries(props)) {
-            if ((prop as any).type === "status") {
-              statusKey = key;
-              statusType = "status";
-              break;
-            }
-            if ((prop as any).type === "select") {
-              statusKey = key;
-              statusType = "select";
-              break;
-            }
+      if (props["Status"]?.type === "status") {
+        statusKey = "Status";
+        statusType = "status";
+      } else if (props["Status"]?.type === "select") {
+        statusKey = "Status";
+        statusType = "select";
+      } else {
+        for (const [key, prop] of Object.entries(props)) {
+          if ((prop as any).type === "status") {
+            statusKey = key;
+            statusType = "status";
+            break;
+          }
+          if ((prop as any).type === "select") {
+            statusKey = key;
+            statusType = "select";
+            break;
           }
         }
-
-        properties[statusKey] =
-          statusType === "status"
-            ? { status: { name: body.status } }
-            : { select: { name: body.status } };
       }
+
+      properties[statusKey] =
+        statusType === "status"
+          ? { status: { name: body.status } }
+          : { select: { name: body.status } };
     }
 
     if (body.due !== undefined) {
