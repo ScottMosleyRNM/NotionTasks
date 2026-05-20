@@ -126,24 +126,24 @@ function getPropValueDisplay(prop: any): string {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const DB_ICON_MAP: Record<string, { src: string; color: string }> = {
-  "Discussion": { src: "/icons/discussion.png", color: "text-purple-500" },
-  "ELT":        { src: "/icons/elt.png",        color: "text-orange-500" },
-  "Tasks":      { src: "/icons/task.png",        color: "text-green-500" },
-  "Things":     { src: "/icons/home.png",        color: "text-blue-500" },
-};
+const DB_ICON_MAP: { match: string; src: string }[] = [
+  { match: "discussion", src: "/icons/discussion.png" },
+  { match: "elt",        src: "/icons/elt.png" },
+  { match: "task",       src: "/icons/task.png" },
+  { match: "thing",      src: "/icons/home.png" },
+];
 
-function getDbIcon(dbName: string) {
-  return DB_ICON_MAP[dbName] ?? null;
+function getDbIcon(dbName: string): string | null {
+  const lower = dbName.toLowerCase();
+  return DB_ICON_MAP.find(e => lower.includes(e.match))?.src ?? null;
 }
 
 function DbIconBadge({ dbName, size = "sm" }: { dbName: string; size?: "sm" | "md" }) {
-  const icon = getDbIcon(dbName);
+  const src = getDbIcon(dbName);
   const px = size === "md" ? 18 : 14;
-  if (icon) {
+  if (src) {
     return (
-      // mix-blend-mode: multiply makes white pixels transparent on light backgrounds
-      <img src={icon.src} width={px} height={px} alt={dbName}
+      <img src={src} width={px} height={px} alt={dbName}
         className="shrink-0 object-contain"
         style={{ mixBlendMode: "multiply" }} />
     );
