@@ -225,12 +225,10 @@ export default function Home() {
 
   // Derived task slices
   const today = getTodayStr();
-  // A task is a "project" if other tasks reference it as their parent
-  const parentIdSet = useMemo(() => new Set(tasks.filter(t => t.parentId).map(t => t.parentId!)), [tasks]);
-  const isProject = (t: Task) => parentIdSet.has(t.id);
-  const inboxTasks = useMemo(() => tasks.filter(t => t.isInbox && !parentIdSet.has(t.id)), [tasks, parentIdSet]);
-  const assignedNonInbox = useMemo(() => tasks.filter(t => !t.isInbox && t.isAssignedToMe && !parentIdSet.has(t.id)), [tasks, parentIdSet]);
-  const nonInboxTasks = useMemo(() => tasks.filter(t => !t.isInbox && !parentIdSet.has(t.id)), [tasks, parentIdSet]);
+  const isProject = (t: Task) => t.taskType?.toLowerCase() === "project" || t.taskType?.toLowerCase() === "area";
+  const inboxTasks = useMemo(() => tasks.filter(t => t.isInbox && !isProject(t)), [tasks]);
+  const assignedNonInbox = useMemo(() => tasks.filter(t => !t.isInbox && t.isAssignedToMe && !isProject(t)), [tasks]);
+  const nonInboxTasks = useMemo(() => tasks.filter(t => !t.isInbox && !isProject(t)), [tasks]);
   const delegatedTasks = useMemo(() => tasks.filter(t => !t.isInbox && t.isCreatedByMe && !t.isAssignedToMe), [tasks]);
   const todayTasks = useMemo(() => assignedNonInbox.filter(t => t.due && (isToday(t.due, today) || isOverdue(t.due, today))), [assignedNonInbox, today]);
   const upcomingTasks = useMemo(() => nonInboxTasks.filter(t => t.due && !isToday(t.due, today) && !isOverdue(t.due, today)), [nonInboxTasks, today]);
@@ -254,11 +252,11 @@ export default function Home() {
       case "source": {
         if (!dbFilter) return [];
         if (projectFilter) return tasks.filter(t => t.databaseId === dbFilter && t.parentId === projectFilter);
-        return tasks.filter(t => t.databaseId === dbFilter && !parentIdSet.has(t.id));
+        return tasks.filter(t => t.databaseId === dbFilter && !isProject(t));
       }
       default: return assignedNonInbox;
     }
-  }, [navView, inboxTasks, todayTasks, upcomingTasks, anytimeTasks, delegatedTasks, assignedNonInbox, tasks, dbFilter, projectFilter, parentIdSet]);
+  }, [navView, inboxTasks, todayTasks, upcomingTasks, anytimeTasks, delegatedTasks, assignedNonInbox, tasks, dbFilter, projectFilter]);
 
   const filteredTasks = useMemo(() => {
     let ts = hideDone ? baseTasks.filter(t => !isDoneStatus(t.status) && !isCancelledStatus(t.status)) : baseTasks;
@@ -348,8 +346,8 @@ export default function Home() {
     ?? databases.find(d => d.areas.length > 0)
     ?? null;
   const thingsProjects = useMemo(() =>
-    thingsDb ? tasks.filter(t => t.databaseId === thingsDb.id && parentIdSet.has(t.id)) : [],
-    [tasks, thingsDb, parentIdSet]
+    thingsDb ? tasks.filter(t => t.databaseId === thingsDb.id && t.taskType?.toLowerCase() === "project") : [],
+    [tasks, thingsDb]
   );
   const viewLabel = navView === "source"
     ? (projectFilter ? (tasks.find(t => t.id === projectFilter)?.title ?? sourceDbName) : sourceDbName)
