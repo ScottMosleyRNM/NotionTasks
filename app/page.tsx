@@ -339,7 +339,9 @@ export default function Home() {
   const selectedTask = tasks.find(t => t.id === selectedTaskId) ?? null;
   const nonInboxDbs = databases.filter(d => !d.isInbox);
   const sourceDbName = dbFilter ? databases.find(d => d.id === dbFilter)?.name ?? "" : "";
-  const thingsDb = databases.find(d => d.name === "Things") ?? null;
+  const thingsDb = databases.find(d => d.name.toLowerCase().includes("thing"))
+    ?? databases.find(d => d.areas.length > 0)
+    ?? null;
   const viewLabel = navView === "source"
     ? (areaFilter ?? sourceDbName)
     : { inbox: "Inbox", today: "Today", upcoming: "Upcoming", anytime: "Anytime", delegated: "Delegated" }[navView as Exclude<NavView, "source">];

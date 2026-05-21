@@ -39,9 +39,15 @@ function getStatus(props: any) {
 }
 
 function getArea(props: any): string | undefined {
-  if (props?.["Area"]?.type === "select") return props["Area"].select?.name || undefined;
-  if (props?.["Area"]?.type === "multi_select" && props["Area"].multi_select?.length) {
-    return props["Area"].multi_select[0].name;
+  for (const key of ["Project", "Projects", "Area", "Areas"]) {
+    const p = props?.[key];
+    if (!p) continue;
+    if (p.type === "select" && p.select?.name) return p.select.name;
+    if (p.type === "multi_select" && p.multi_select?.length) return p.multi_select[0].name;
+    if (p.type === "rich_text" && p.rich_text?.length) {
+      const val = p.rich_text.map((t: any) => t.plain_text).join("").trim();
+      if (val) return val;
+    }
   }
   return undefined;
 }
