@@ -38,6 +38,13 @@ function getStatus(props: any) {
   return "Unknown";
 }
 
+function getTaskType(props: any): string | undefined {
+  if (props?.["Type"]?.type === "select") return props["Type"].select?.name || undefined;
+  if (props?.["Type"]?.type === "multi_select" && props["Type"].multi_select?.length) return props["Type"].multi_select[0].name || undefined;
+  if (props?.["Type"]?.type === "status") return props["Type"].status?.name || undefined;
+  return undefined;
+}
+
 function getArea(props: any): string | undefined {
   for (const key of ["Project", "Projects", "Area", "Areas"]) {
     const p = props?.[key];
@@ -146,6 +153,7 @@ export async function GET() {
           due: getDue(props),
           status: getStatus(props),
           area: getArea(props),
+          taskType: getTaskType(props),
           allAssigneeNames: getAllAssigneeNames(props),
           otherAssignees: getOtherAssigneeNames(props, myUserId || undefined),
           databaseId: dbId,

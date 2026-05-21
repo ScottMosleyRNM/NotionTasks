@@ -27,6 +27,7 @@ type Task = {
   due?: string;
   status: string;
   area?: string;
+  taskType?: string;
   databaseId: string;
   database: string;
   databaseIcon?: string;
@@ -223,9 +224,10 @@ export default function Home() {
 
   // Derived task slices
   const today = getTodayStr();
-  const inboxTasks = useMemo(() => tasks.filter(t => t.isInbox), [tasks]);
-  const assignedNonInbox = useMemo(() => tasks.filter(t => !t.isInbox && t.isAssignedToMe), [tasks]);
-  const nonInboxTasks = useMemo(() => tasks.filter(t => !t.isInbox), [tasks]);
+  const isProject = (t: Task) => t.taskType?.toLowerCase() === "project";
+  const inboxTasks = useMemo(() => tasks.filter(t => t.isInbox && !isProject(t)), [tasks]);
+  const assignedNonInbox = useMemo(() => tasks.filter(t => !t.isInbox && t.isAssignedToMe && !isProject(t)), [tasks]);
+  const nonInboxTasks = useMemo(() => tasks.filter(t => !t.isInbox && !isProject(t)), [tasks]);
   const delegatedTasks = useMemo(() => tasks.filter(t => !t.isInbox && t.isCreatedByMe && !t.isAssignedToMe), [tasks]);
   const todayTasks = useMemo(() => assignedNonInbox.filter(t => t.due && (isToday(t.due, today) || isOverdue(t.due, today))), [assignedNonInbox, today]);
   const upcomingTasks = useMemo(() => nonInboxTasks.filter(t => t.due && !isToday(t.due, today) && !isOverdue(t.due, today)), [nonInboxTasks, today]);
@@ -342,6 +344,10 @@ export default function Home() {
   const thingsDb = databases.find(d => d.name.toLowerCase().includes("thing"))
     ?? databases.find(d => d.areas.length > 0)
     ?? null;
+  const thingsProjects = useMemo(() =>
+    thingsDb ? tasks.filter(t => t.databaseId === thingsDb.id && isProject(t)) : [],
+    [tasks, thingsDb]
+  );
   const viewLabel = navView === "source"
     ? (areaFilter ?? sourceDbName)
     : { inbox: "Inbox", today: "Today", upcoming: "Upcoming", anytime: "Anytime", delegated: "Delegated" }[navView as Exclude<NavView, "source">];
@@ -392,18 +398,18 @@ export default function Home() {
             ))}
           </div>
         )}
-        {thingsDb && thingsDb.areas.length > 0 && (
+        {thingsProjects.length > 0 && (
           <div className="pt-3 border-t border-[#DDD8D0] px-3 pb-4">
-            <p className="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-[#B0AA9F]">Areas</p>
-            {thingsDb.areas.map(area => (
-              <button key={area}
-                onClick={() => { setNavView("source"); setDbFilter(thingsDb.id); setAreaFilter(area); setQuery(""); }}
+            <p className="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-[#B0AA9F]">Projects</p>
+            {thingsProjects.map(proj => (
+              <button key={proj.id}
+                onClick={() => setSelectedTaskId(proj.id)}
                 className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-[13px] transition-colors ${
-                  navView === "source" && dbFilter === thingsDb.id && areaFilter === area ? "bg-white shadow-sm text-gray-900 font-medium" : "text-[#4A453D] hover:bg-[#E5E0D8]"
+                  selectedTaskId === proj.id ? "bg-white shadow-sm text-gray-900 font-medium" : "text-[#4A453D] hover:bg-[#E5E0D8]"
                 }`}
               >
                 <DbIconBadge dbName="Things" />
-                <span className="truncate">{area}</span>
+                <span className="truncate">{proj.title}</span>
               </button>
             ))}
           </div>
@@ -420,12 +426,12 @@ export default function Home() {
       {/* ── Mobile Nav Page (full-screen, mobile only) ── */}
       {showMobileNav && (
         <MobileNavPage
-          navView={navView} dbFilter={dbFilter} areaFilter={areaFilter} counts={counts}
+          navView={navView} dbFilter={dbFilter} counts={counts}
           navItems={navItems} nonInboxDbs={nonInboxDbs} databases={databases}
-          thingsDb={thingsDb}
+          thingsProjects={thingsProjects}
           onNav={(view) => { setNavView(view); setDbFilter(null); setAreaFilter(null); setSelectedTaskId(null); setShowMobileNav(false); }}
           onSource={(id) => { setNavView("source"); setDbFilter(id); setAreaFilter(null); setSelectedTaskId(null); setShowMobileNav(false); }}
-          onArea={(dbId, area) => { setNavView("source"); setDbFilter(dbId); setAreaFilter(area); setSelectedTaskId(null); setShowMobileNav(false); }}
+          onProject={(id) => { setSelectedTaskId(id); setShowMobileNav(false); }}
           onClose={() => setShowMobileNav(false)}
         />
       )}
@@ -550,13 +556,13 @@ function SidebarNavItem({ label, icon, count, active, onClick }: {
 
 // ─── MobileNavPage ────────────────────────────────────────────────────────────
 
-function MobileNavPage({ navView, dbFilter, areaFilter, counts, navItems, nonInboxDbs, databases, thingsDb, onNav, onSource, onArea, onClose }: {
-  navView: NavView; dbFilter: string | null; areaFilter: string | null;
+function MobileNavPage({ navView, dbFilter, counts, navItems, nonInboxDbs, databases, thingsProjects, onNav, onSource, onProject, onClose }: {
+  navView: NavView; dbFilter: string | null;
   counts: Record<string, number>;
   navItems: { view: NavView; label: string; mobileIcon: React.ReactNode; sidebarIcon: React.ReactNode }[];
   nonInboxDbs: TaskDatabase[]; databases: TaskDatabase[];
-  thingsDb: TaskDatabase | null;
-  onNav: (v: NavView) => void; onSource: (id: string) => void; onArea: (dbId: string, area: string) => void; onClose: () => void;
+  thingsProjects: Task[];
+  onNav: (v: NavView) => void; onSource: (id: string) => void; onProject: (id: string) => void; onClose: () => void;
 }) {
   const navIconBgs: Record<NavView, string> = {
     inbox: "bg-blue-500", today: "bg-yellow-400", upcoming: "bg-red-400",
@@ -605,7 +611,7 @@ function MobileNavPage({ navView, dbFilter, areaFilter, counts, navItems, nonInb
         <div className="mt-1 pt-4 border-t border-[#DDD8D0] px-4 pb-3">
           <p className="px-1 mb-2 text-[11px] font-semibold uppercase tracking-widest text-[#B0AA9F]">Databases</p>
           {nonInboxDbs.map(db => {
-            const active = navView === "source" && dbFilter === db.id && !areaFilter;
+            const active = navView === "source" && dbFilter === db.id;
             return (
               <button key={db.id} onClick={() => onSource(db.id)}
                 className={`w-full flex items-center gap-4 px-4 py-3 rounded-2xl mb-1 transition-colors ${
@@ -623,26 +629,21 @@ function MobileNavPage({ navView, dbFilter, areaFilter, counts, navItems, nonInb
         </div>
       )}
 
-      {/* Areas (from Things DB) */}
-      {thingsDb && thingsDb.areas.length > 0 && (
+      {/* Projects (from Things DB) */}
+      {thingsProjects.length > 0 && (
         <div className="mt-1 pt-4 border-t border-[#DDD8D0] px-4 pb-6">
-          <p className="px-1 mb-2 text-[11px] font-semibold uppercase tracking-widest text-[#B0AA9F]">Areas</p>
-          {thingsDb.areas.map(area => {
-            const active = navView === "source" && dbFilter === thingsDb.id && areaFilter === area;
-            return (
-              <button key={area} onClick={() => onArea(thingsDb.id, area)}
-                className={`w-full flex items-center gap-4 px-4 py-3 rounded-2xl mb-1 transition-colors ${
-                  active ? "bg-white shadow-sm" : "active:bg-[#E5E0D8]"
-                }`}>
-                <div className="w-10 h-10 rounded-xl bg-white/60 flex items-center justify-center shrink-0">
-                  <DbIconBadge dbName="Things" size="md" />
-                </div>
-                <span className={`flex-1 text-left text-[17px] font-medium ${active ? "text-gray-900" : "text-[#4A453D]"}`}>
-                  {area}
-                </span>
-              </button>
-            );
-          })}
+          <p className="px-1 mb-2 text-[11px] font-semibold uppercase tracking-widest text-[#B0AA9F]">Projects</p>
+          {thingsProjects.map(proj => (
+            <button key={proj.id} onClick={() => onProject(proj.id)}
+              className="w-full flex items-center gap-4 px-4 py-3 rounded-2xl mb-1 active:bg-[#E5E0D8] transition-colors">
+              <div className="w-10 h-10 rounded-xl bg-white/60 flex items-center justify-center shrink-0">
+                <DbIconBadge dbName="Things" size="md" />
+              </div>
+              <span className="flex-1 text-left text-[17px] font-medium text-[#4A453D] truncate">
+                {proj.title}
+              </span>
+            </button>
+          ))}
         </div>
       )}
     </div>
