@@ -159,12 +159,19 @@ export async function GET() {
 
   for (const dbId of DATABASE_IDS) {
     try {
-      const response = await notion.databases.query({
-        database_id: dbId,
-        page_size: 100,
-      });
+      let cursor: string | undefined = undefined;
+      let allPages: any[] = [];
+      do {
+        const response = await notion.databases.query({
+          database_id: dbId,
+          page_size: 100,
+          start_cursor: cursor,
+        }) as any;
+        allPages.push(...response.results);
+        cursor = response.has_more ? response.next_cursor : undefined;
+      } while (cursor);
 
-      for (const page of response.results) {
+      for (const page of allPages) {
         if (!("properties" in page)) continue;
         const safePage = page as any;
         const props = safePage.properties ?? {};

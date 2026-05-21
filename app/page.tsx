@@ -185,7 +185,7 @@ export default function Home() {
       .then(data => {
         if (Array.isArray(data)) {
           setTasks(data);
-          try { localStorage.setItem("notion-tasks-cache", JSON.stringify(data)); } catch {}
+          try { localStorage.setItem("notion-tasks-cache-v2", JSON.stringify(data)); } catch {}
         }
       })
       .catch(() => {})
@@ -195,7 +195,7 @@ export default function Home() {
       .then((data: TaskDatabase[]) => {
         if (Array.isArray(data)) {
           setDatabases(data.map((d: any) => ({ ...d, areas: d.areas ?? [] })));
-          try { localStorage.setItem("notion-dbs-cache", JSON.stringify(data)); } catch {}
+          try { localStorage.setItem("notion-dbs-cache-v2", JSON.stringify(data)); } catch {}
           setComposeDb(defaultInboxId(data));
         }
       })
@@ -204,8 +204,8 @@ export default function Home() {
   }
 
   useEffect(() => {
-    try { const c = localStorage.getItem("notion-tasks-cache"); if (c) { const p = JSON.parse(c); if (Array.isArray(p)) { setTasks(p); setLoading(false); } } } catch {}
-    try { const c = localStorage.getItem("notion-dbs-cache"); if (c) { const p: TaskDatabase[] = JSON.parse(c); if (Array.isArray(p)) { setDatabases(p.map(d => ({ ...d, areas: d.areas ?? [] }))); setComposeDb(defaultInboxId(p)); } } } catch {}
+    try { const c = localStorage.getItem("notion-tasks-cache-v2"); if (c) { const p = JSON.parse(c); if (Array.isArray(p)) { setTasks(p); setLoading(false); } } } catch {}
+    try { const c = localStorage.getItem("notion-dbs-cache-v2"); if (c) { const p: TaskDatabase[] = JSON.parse(c); if (Array.isArray(p)) { setDatabases(p.map(d => ({ ...d, areas: d.areas ?? [] }))); setComposeDb(defaultInboxId(p)); } } } catch {}
     doRefresh();
   }, []); // eslint-disable-line
 
