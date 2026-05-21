@@ -39,9 +39,30 @@ function getStatus(props: any) {
 }
 
 function getTaskType(props: any): string | undefined {
-  if (props?.["Type"]?.type === "select") return props["Type"].select?.name || undefined;
-  if (props?.["Type"]?.type === "multi_select" && props["Type"].multi_select?.length) return props["Type"].multi_select[0].name || undefined;
-  if (props?.["Type"]?.type === "status") return props["Type"].status?.name || undefined;
+  for (const key of Object.keys(props || {})) {
+    if (key.toLowerCase() !== "type") continue;
+    const p = props[key];
+    if (p?.type === "select") return p.select?.name || undefined;
+    if (p?.type === "multi_select" && p.multi_select?.length) return p.multi_select[0].name || undefined;
+    if (p?.type === "status") return p.status?.name || undefined;
+  }
+  return undefined;
+}
+
+function getParentId(props: any): string | undefined {
+  // Check Notion's built-in sub-item relation names first, then common custom names
+  const candidates = ["Parent item", "Parent", "Parent task", "Sub-item of"];
+  for (const key of candidates) {
+    const p = props?.[key];
+    if (p?.type === "relation" && p.relation?.length > 0) return p.relation[0].id;
+  }
+  // Case-insensitive fallback
+  for (const key of Object.keys(props || {})) {
+    if (["parent item", "parent", "parent task", "sub-item of"].includes(key.toLowerCase())) {
+      const p = props[key];
+      if (p?.type === "relation" && p.relation?.length > 0) return p.relation[0].id;
+    }
+  }
   return undefined;
 }
 
@@ -154,6 +175,7 @@ export async function GET() {
           status: getStatus(props),
           area: getArea(props),
           taskType: getTaskType(props),
+          parentId: getParentId(props),
           allAssigneeNames: getAllAssigneeNames(props),
           otherAssignees: getOtherAssigneeNames(props, myUserId || undefined),
           databaseId: dbId,

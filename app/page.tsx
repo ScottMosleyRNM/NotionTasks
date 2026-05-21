@@ -28,6 +28,7 @@ type Task = {
   status: string;
   area?: string;
   taskType?: string;
+  parentId?: string;
   databaseId: string;
   database: string;
   databaseIcon?: string;
@@ -169,7 +170,7 @@ export default function Home() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showMobileNav, setShowMobileNav] = useState(false);
-  const [areaFilter, setAreaFilter] = useState<string | null>(null);
+  const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
   const touchStartY = useRef(0);
 
@@ -249,13 +250,13 @@ export default function Home() {
       case "anytime": return anytimeTasks;
       case "delegated": return delegatedTasks;
       case "source": {
-        let src = dbFilter ? tasks.filter(t => t.databaseId === dbFilter) : [];
-        if (areaFilter) src = src.filter(t => t.area === areaFilter);
+        let src = dbFilter ? tasks.filter(t => t.databaseId === dbFilter && !isProject(t)) : [];
+        if (projectFilter) src = src.filter(t => t.parentId === projectFilter);
         return src;
       }
       default: return assignedNonInbox;
     }
-  }, [navView, inboxTasks, todayTasks, upcomingTasks, anytimeTasks, delegatedTasks, assignedNonInbox, tasks, dbFilter, areaFilter]);
+  }, [navView, inboxTasks, todayTasks, upcomingTasks, anytimeTasks, delegatedTasks, assignedNonInbox, tasks, dbFilter, projectFilter]);
 
   const filteredTasks = useMemo(() => {
     let ts = hideDone ? baseTasks.filter(t => !isDoneStatus(t.status) && !isCancelledStatus(t.status)) : baseTasks;
@@ -349,7 +350,7 @@ export default function Home() {
     [tasks, thingsDb]
   );
   const viewLabel = navView === "source"
-    ? (areaFilter ?? sourceDbName)
+    ? (projectFilter ? (tasks.find(t => t.id === projectFilter)?.title ?? sourceDbName) : sourceDbName)
     : { inbox: "Inbox", today: "Today", upcoming: "Upcoming", anytime: "Anytime", delegated: "Delegated" }[navView as Exclude<NavView, "source">];
 
   const navItems: { view: NavView; label: string; mobileIcon: React.ReactNode; sidebarIcon: React.ReactNode }[] = [
@@ -379,7 +380,7 @@ export default function Home() {
           {navItems.map(item => (
             <SidebarNavItem key={item.view} label={item.label} icon={item.sidebarIcon}
               count={counts[item.view]} active={navView === item.view && !dbFilter}
-              onClick={() => { setNavView(item.view); setDbFilter(null); setAreaFilter(null); setQuery(""); }} />
+              onClick={() => { setNavView(item.view); setDbFilter(null); setProjectFilter(null); setQuery(""); }} />
           ))}
         </div>
         {nonInboxDbs.length > 0 && (
@@ -387,9 +388,9 @@ export default function Home() {
             <p className="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-[#B0AA9F]">Databases</p>
             {nonInboxDbs.map((db) => (
               <button key={db.id}
-                onClick={() => { setNavView("source"); setDbFilter(db.id); setAreaFilter(null); setQuery(""); }}
+                onClick={() => { setNavView("source"); setDbFilter(db.id); setProjectFilter(null); setQuery(""); }}
                 className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-[13px] transition-colors ${
-                  navView === "source" && dbFilter === db.id && !areaFilter ? "bg-white shadow-sm text-gray-900 font-medium" : "text-[#4A453D] hover:bg-[#E5E0D8]"
+                  navView === "source" && dbFilter === db.id && !projectFilter ? "bg-white shadow-sm text-gray-900 font-medium" : "text-[#4A453D] hover:bg-[#E5E0D8]"
                 }`}
               >
                 <DbIconBadge dbName={db.name} />
@@ -403,9 +404,9 @@ export default function Home() {
             <p className="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-[#B0AA9F]">Projects</p>
             {thingsProjects.map(proj => (
               <button key={proj.id}
-                onClick={() => setSelectedTaskId(proj.id)}
+                onClick={() => { setNavView("source"); setDbFilter(thingsDb!.id); setProjectFilter(proj.id); setQuery(""); }}
                 className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-[13px] transition-colors ${
-                  selectedTaskId === proj.id ? "bg-white shadow-sm text-gray-900 font-medium" : "text-[#4A453D] hover:bg-[#E5E0D8]"
+                  projectFilter === proj.id ? "bg-white shadow-sm text-gray-900 font-medium" : "text-[#4A453D] hover:bg-[#E5E0D8]"
                 }`}
               >
                 <DbIconBadge dbName="Things" />
@@ -429,9 +430,9 @@ export default function Home() {
           navView={navView} dbFilter={dbFilter} counts={counts}
           navItems={navItems} nonInboxDbs={nonInboxDbs} databases={databases}
           thingsProjects={thingsProjects}
-          onNav={(view) => { setNavView(view); setDbFilter(null); setAreaFilter(null); setSelectedTaskId(null); setShowMobileNav(false); }}
-          onSource={(id) => { setNavView("source"); setDbFilter(id); setAreaFilter(null); setSelectedTaskId(null); setShowMobileNav(false); }}
-          onProject={(id) => { setSelectedTaskId(id); setShowMobileNav(false); }}
+          onNav={(view) => { setNavView(view); setDbFilter(null); setProjectFilter(null); setSelectedTaskId(null); setShowMobileNav(false); }}
+          onSource={(id) => { setNavView("source"); setDbFilter(id); setProjectFilter(null); setSelectedTaskId(null); setShowMobileNav(false); }}
+          onProject={(id) => { setNavView("source"); setDbFilter(thingsDb?.id ?? null); setProjectFilter(id); setSelectedTaskId(null); setShowMobileNav(false); }}
           onClose={() => setShowMobileNav(false)}
         />
       )}
