@@ -28,10 +28,6 @@ export async function GET() {
       // Extract status options from schema
       const statuses: string[] = [];
       for (const prop of Object.values(db.properties || {}) as any[]) {
-        if (prop.name === "Checkbox" && prop.type === "checkbox") {
-          statuses.push("Not started", "Done");
-          break;
-        }
         if (prop.type === "status") {
           const groups: any[] = prop.status?.groups || [];
           const options: any[] = prop.status?.options || [];
@@ -53,16 +49,19 @@ export async function GET() {
         }
       }
 
-      // Extract Area options (for Things-style area navigation)
+      // Extract Project/Area options for Things-style navigation
       const areas: string[] = [];
-      for (const prop of Object.values(db.properties || {}) as any[]) {
-        if (prop.name === "Area" && prop.type === "select") {
-          areas.push(...(prop.select?.options || []).map((o: any) => o.name).filter(Boolean));
-          break;
-        }
-        if (prop.name === "Area" && prop.type === "multi_select") {
-          areas.push(...(prop.multi_select?.options || []).map((o: any) => o.name).filter(Boolean));
-          break;
+      const areaFieldNames = ["Project", "Projects", "Area", "Areas"];
+      outer: for (const fieldName of areaFieldNames) {
+        for (const prop of Object.values(db.properties || {}) as any[]) {
+          if (prop.name === fieldName && prop.type === "select") {
+            areas.push(...(prop.select?.options || []).map((o: any) => o.name).filter(Boolean));
+            break outer;
+          }
+          if (prop.name === fieldName && prop.type === "multi_select") {
+            areas.push(...(prop.multi_select?.options || []).map((o: any) => o.name).filter(Boolean));
+            break outer;
+          }
         }
       }
 

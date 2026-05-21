@@ -28,10 +28,6 @@ function getDue(props: any) {
 }
 
 function getStatus(props: any) {
-  // "Checkbox" boolean field used by the Things database for completion tracking
-  if (props?.["Checkbox"]?.type === "checkbox") {
-    return props["Checkbox"].checkbox ? "Done" : "Not started";
-  }
   if (props?.["Status"]?.status?.name) return props["Status"].status.name;
   if (props?.["Status"]?.select?.name) return props["Status"].select.name;
   for (const key of Object.keys(props || {})) {
