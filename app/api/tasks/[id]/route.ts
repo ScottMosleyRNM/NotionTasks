@@ -1,124 +1,83 @@
-import { notion } from "@/lib/notion";
 import { NextResponse } from "next/server";
+import { requireSession, retrieveDatabase } from "@/lib/notion";
+import { analyzeSchema, statusUpdate } from "@/lib/schema";
+import { blocksToBody, formatProperty, pageToTask, resolveUsers } from "@/lib/tasks";
+import type { TaskDetail } from "@/lib/types";
 
-function isDoneStatus(s: string) {
-  const l = s.toLowerCase();
-  return l.includes("done") || l.includes("complete") || l.includes("finish") || l.includes("closed");
-}
+export const dynamic = "force-dynamic";
 
-function richTextToPlain(arr: any[] | undefined) {
-  if (!Array.isArray(arr)) return "";
-  return arr.map((t) => t?.plain_text || "").join("");
-}
-
-function getBodyText(blocks: any[]) {
-  const lines: string[] = [];
-  for (const block of blocks || []) {
-    const type = block?.type;
-    if (!type) continue;
-    const value = block[type];
-    if (
-      ["paragraph", "heading_1", "heading_2", "heading_3", "bulleted_list_item", "numbered_list_item", "to_do"].includes(type)
-    ) {
-      const text = richTextToPlain(value?.rich_text);
-      if (text) lines.push(text);
-    }
+async function loadPage(id: string) {
+  const auth = await requireSession();
+  if (auth.error) return { error: auth.error };
+  const { session, notion } = auth;
+  const page: any = await notion.pages.retrieve({ page_id: id });
+  const databaseId = page.parent?.database_id;
+  if (!databaseId || !session.dbs.some((d) => d.id === databaseId)) {
+    return { error: NextResponse.json({ error: "Task isn't in a selected database" }, { status: 403 }) };
   }
-  return lines.join("\n").trim();
+  const schema = analyzeSchema(await retrieveDatabase(notion, session.token, databaseId));
+  return { session, notion, page, schema, databaseId };
 }
 
-export async function GET(
-  _req: Request,
-  { params }: { params: { id: string } }
-) {
+export async function GET(_req: Request, { params }: { params: { id: string } }) {
   try {
-    const page = await notion.pages.retrieve({ page_id: params.id });
-    const blocks = await notion.blocks.children.list({ block_id: params.id, page_size: 100 });
+    const r = await loadPage(params.id);
+    if (r.error) return r.error;
+    const { notion, page, schema, databaseId } = r;
 
-    return NextResponse.json({
-      page,
-      blocks: blocks.results,
-      bodyText: getBodyText(blocks.results as any[]),
-      has_more: blocks.has_more,
-      next_cursor: blocks.next_cursor,
-    });
-  } catch (error) {
-    console.error("GET task detail error", params.id, error);
-    return NextResponse.json({ error: "Failed to load task" }, { status: 500 });
+    const [blocks] = await Promise.all([
+      notion.blocks.children.list({ block_id: params.id, page_size: 100 }),
+      resolveUsers(notion, [page.created_by?.id].filter(Boolean)),
+    ]);
+
+    // Title, status, due and assignee are already on the task itself.
+    const shown = new Set([schema.title, schema.status?.name, schema.due, schema.assignee]);
+    const properties = Object.entries(page.properties ?? {})
+      .filter(([name]) => !shown.has(name))
+      .map(([name, p]) => ({ name, value: formatProperty(p) }))
+      .filter((p): p is TaskDetail["properties"][number] => p.value !== null)
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    const detail: TaskDetail = {
+      task: pageToTask(page, schema, databaseId),
+      body: blocksToBody(blocks.results as any[]),
+      properties,
+    };
+    return NextResponse.json(detail);
+  } catch (e: any) {
+    console.error("Task detail failed", params.id, e?.message);
+    return NextResponse.json({ error: e?.message ?? "Failed to load task" }, { status: 500 });
   }
 }
 
-export async function PATCH(
-  req: Request,
-  { params }: { params: { id: string } }
-) {
+// PATCH { title?, due? (null clears), complete?, status? }
+export async function PATCH(req: Request, { params }: { params: { id: string } }) {
   try {
-    const body = await req.json();
+    const r = await loadPage(params.id);
+    if (r.error) return r.error;
+    const { notion, schema, databaseId } = r;
+    const body = await req.json().catch(() => ({}));
 
-    // Retrieve the page to understand its property types
-    const page = await notion.pages.retrieve({ page_id: params.id }) as any;
-    const props = page.properties || {};
     const properties: Record<string, any> = {};
-
-    if (body.status !== undefined) {
-      let statusKey = "Status";
-      let statusType: "status" | "select" = "status";
-
-      if (props["Status"]?.type === "status") {
-        statusKey = "Status";
-        statusType = "status";
-      } else if (props["Status"]?.type === "select") {
-        statusKey = "Status";
-        statusType = "select";
-      } else {
-        for (const [key, prop] of Object.entries(props)) {
-          if ((prop as any).type === "status") {
-            statusKey = key;
-            statusType = "status";
-            break;
-          }
-          if ((prop as any).type === "select") {
-            statusKey = key;
-            statusType = "select";
-            break;
-          }
-        }
-      }
-
-      properties[statusKey] =
-        statusType === "status"
-          ? { status: { name: body.status } }
-          : { select: { name: body.status } };
+    if (typeof body.title === "string" && body.title.trim()) {
+      properties[schema.title] = { title: [{ text: { content: body.title.trim() } }] };
     }
-
-    if (body.due !== undefined) {
-      let dueKey = "Due";
-      for (const [key, prop] of Object.entries(props)) {
-        if ((prop as any).type === "date") {
-          dueKey = key;
-          break;
-        }
-      }
-      properties[dueKey] = body.due ? { date: { start: body.due } } : { date: null };
+    if (body.due !== undefined && schema.due) {
+      properties[schema.due] = { date: body.due ? { start: body.due } : null };
     }
-
-    if (body.title !== undefined) {
-      for (const [key, prop] of Object.entries(props)) {
-        if ((prop as any).type === "title") {
-          properties[key] = { title: [{ text: { content: body.title } }] };
-          break;
-        }
-      }
+    if (typeof body.complete === "boolean" || typeof body.status === "string") {
+      const update = statusUpdate(schema, typeof body.status === "string" ? { name: body.status } : { complete: body.complete });
+      if (!update) return NextResponse.json({ error: "This database has no status property to update" }, { status: 400 });
+      Object.assign(properties, update);
     }
-
-    if (Object.keys(properties).length === 0) {
+    if (!Object.keys(properties).length) {
       return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
     }
 
-    await notion.pages.update({ page_id: params.id, properties });
-    return NextResponse.json({ ok: true, id: params.id });
-  } catch (error) {
-    console.error("PATCH task error", params.id, error);
-    return NextResponse.json({ error: "Failed to update task" }, { status: 500 });
+    const page = await notion.pages.update({ page_id: params.id, properties });
+    return NextResponse.json(pageToTask(page, schema, databaseId));
+  } catch (e: any) {
+    console.error("Task update failed", params.id, e?.message);
+    return NextResponse.json({ error: e?.message ?? "Failed to update task" }, { status: 500 });
   }
 }

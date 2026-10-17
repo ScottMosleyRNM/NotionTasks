@@ -1,288 +1,106 @@
-import { notion } from "@/lib/notion";
-import { DATABASE_IDS, INBOX_DB, DEFAULT_ASSIGNEE, getDatabaseLabels } from "@/lib/config";
 import { NextResponse } from "next/server";
+import { databaseTitle, extractIcon, mapLimit, requireSession, retrieveDatabase } from "@/lib/notion";
+import { analyzeSchema, completedTasksFilter, openTasksFilter } from "@/lib/schema";
+import { pageToTask, resolveUsers } from "@/lib/tasks";
+import type { Task, TaskDatabase } from "@/lib/types";
 
-function richTextToPlain(arr: any[] | undefined) {
-  if (!Array.isArray(arr)) return "";
-  return arr.map((t) => t?.plain_text || "").join("");
-}
+export const dynamic = "force-dynamic";
 
-function getTitle(props: any) {
-  for (const key of Object.keys(props || {})) {
-    const prop = props[key];
-    if (prop?.type === "title") {
-      return richTextToPlain(prop.title) || "Untitled";
-    }
-  }
-  return "Untitled";
-}
+const MAX_OPEN_PER_DB = 1000;
+const LOGBOOK_PER_DB = 50;
 
-function getDue(props: any) {
-  if (props?.["Due"]?.date?.start) return props["Due"].date.start;
-  if (props?.["Due date"]?.date?.start) return props["Due date"].date.start;
-  for (const key of Object.keys(props || {})) {
-    const prop = props[key];
-    if (prop?.type === "date" && prop.date?.start) return prop.date.start;
-  }
-  return undefined;
-}
+// GET /api/tasks            -> open tasks from every selected database
+// GET /api/tasks?logbook=1  -> recently completed tasks
+export async function GET(req: Request) {
+  const auth = await requireSession();
+  if (auth.error) return auth.error;
+  const { session, notion } = auth;
+  const logbook = new URL(req.url).searchParams.has("logbook");
 
-function getStatus(props: any) {
-  if (props?.["Status"]?.status?.name) return props["Status"].status.name;
-  if (props?.["Status"]?.select?.name) return props["Status"].select.name;
-  for (const key of Object.keys(props || {})) {
-    const prop = props[key];
-    if (prop?.type === "status" && prop.status?.name) return prop.status.name;
-    if (prop?.type === "select" && prop.select?.name) return prop.select.name;
-  }
-  return "Unknown";
-}
+  const databases: TaskDatabase[] = [];
+  const errors: { databaseId: string; message: string }[] = [];
+  const pagesByDb: { db: TaskDatabase; schema: ReturnType<typeof analyzeSchema>; pages: any[] }[] = [];
 
-function getTaskType(props: any): string | undefined {
-  for (const key of Object.keys(props || {})) {
-    if (key.toLowerCase() !== "type") continue;
-    const p = props[key];
-    if (p?.type === "select") return p.select?.name || undefined;
-    if (p?.type === "multi_select" && p.multi_select?.length) return p.multi_select[0].name || undefined;
-    if (p?.type === "status") return p.status?.name || undefined;
-  }
-  return undefined;
-}
-
-function getParentId(props: any): string | undefined {
-  // Check Notion's built-in sub-item relation names first, then common custom names
-  const candidates = ["Parent item", "Parent", "Parent task", "Sub-item of"];
-  for (const key of candidates) {
-    const p = props?.[key];
-    if (p?.type === "relation" && p.relation?.length > 0) return p.relation[0].id;
-  }
-  // Case-insensitive fallback
-  for (const key of Object.keys(props || {})) {
-    if (["parent item", "parent", "parent task", "sub-item of"].includes(key.toLowerCase())) {
-      const p = props[key];
-      if (p?.type === "relation" && p.relation?.length > 0) return p.relation[0].id;
-    }
-  }
-  return undefined;
-}
-
-function getArea(props: any): string | undefined {
-  for (const key of ["Project", "Projects", "Area", "Areas"]) {
-    const p = props?.[key];
-    if (!p) continue;
-    if (p.type === "select" && p.select?.name) return p.select.name;
-    if (p.type === "multi_select" && p.multi_select?.length) return p.multi_select[0].name;
-    if (p.type === "rich_text" && p.rich_text?.length) {
-      const val = p.rich_text.map((t: any) => t.plain_text).join("").trim();
-      if (val) return val;
-    }
-  }
-  return undefined;
-}
-
-function getAllAssigneeNames(props: any): string[] {
-  if (props?.["Assignee"]?.people) {
-    return props["Assignee"].people.map((p: any) => p.name).filter(Boolean);
-  }
-  for (const key of Object.keys(props || {})) {
-    const prop = props[key];
-    if (prop?.type === "people" && Array.isArray(prop.people)) {
-      return prop.people.map((p: any) => p.name).filter(Boolean);
-    }
-  }
-  return [];
-}
-
-function getOtherAssigneeNames(props: any, excludeUserId?: string): string[] {
-  if (props?.["Assignee"]?.people) {
-    return props["Assignee"].people
-      .filter((p: any) => !excludeUserId || p.id !== excludeUserId)
-      .map((p: any) => p.name)
-      .filter(Boolean);
-  }
-  for (const key of Object.keys(props || {})) {
-    const prop = props[key];
-    if (prop?.type === "people" && Array.isArray(prop.people)) {
-      return prop.people
-        .filter((p: any) => !excludeUserId || p.id !== excludeUserId)
-        .map((p: any) => p.name)
-        .filter(Boolean);
-    }
-  }
-  return [];
-}
-
-function isAssignedToUser(props: any, userId: string): boolean {
-  if (!userId) return false;
-  if (props?.["Assignee"]?.people) {
-    return props["Assignee"].people.some((p: any) => p.id === userId);
-  }
-  for (const key of Object.keys(props || {})) {
-    const prop = props[key];
-    if (prop?.type === "people" && Array.isArray(prop.people)) {
-      return prop.people.some((p: any) => p.id === userId);
-    }
-  }
-  return false;
-}
-
-function extractIcon(icon: any): string | undefined {
-  if (!icon) return undefined;
-  if (icon.type === "emoji") return icon.emoji;
-  if (icon.type === "external") return icon.external?.url;
-  if (icon.type === "file") return icon.file?.url;
-  return undefined;
-}
-
-export async function GET() {
-  const labels = getDatabaseLabels();
-  const myUserId = DEFAULT_ASSIGNEE; // may be empty string if not configured
-  const results: any[] = [];
-
-  // Pre-fetch DB metadata (real name + icon) in parallel before querying tasks
-  const dbMeta: Record<string, { name: string; icon?: string }> = {};
-  await Promise.all(
-    DATABASE_IDS.map(async (dbId) => {
-      try {
-        const db = await notion.databases.retrieve({ database_id: dbId }) as any;
-        const notionTitle =
-          (db.title || []).map((t: any) => t.plain_text).join("") || dbId.slice(0, 6);
-        dbMeta[dbId] = {
-          name: labels[dbId] || notionTitle,
-          icon: extractIcon(db.icon),
-        };
-      } catch {
-        dbMeta[dbId] = { name: labels[dbId] || dbId.slice(0, 6) };
-      }
-    })
-  );
-
-  for (const dbId of DATABASE_IDS) {
+  await mapLimit(session.dbs, 3, async (sel) => {
     try {
-      let cursor: string | undefined = undefined;
-      let allPages: any[] = [];
+      const raw = await retrieveDatabase(notion, session.token, sel.id);
+      const schema = analyzeSchema(raw);
+      const db: TaskDatabase = {
+        id: raw.id,
+        name: databaseTitle(raw),
+        icon: extractIcon(raw.icon),
+        url: raw.url,
+        mineOnly: sel.mine && !!schema.assignee,
+        hasAssignee: !!schema.assignee,
+        statuses: schema.status && schema.status.kind !== "checkbox" ? schema.status.options : [],
+      };
+      databases.push(db);
+
+      const userFilter = db.mineOnly ? session.userId : undefined;
+      const filter = logbook ? completedTasksFilter(schema, userFilter) : openTasksFilter(schema, userFilter);
+      if (logbook && !filter) return; // no way to tell what's complete
+
+      const pages: any[] = [];
+      let cursor: string | undefined;
       do {
-        const response = await notion.databases.query({
-          database_id: dbId,
+        const res: any = await notion.databases.query({
+          database_id: sel.id,
           page_size: 100,
           start_cursor: cursor,
-        }) as any;
-        allPages.push(...response.results);
-        cursor = response.has_more ? response.next_cursor : undefined;
-      } while (cursor);
-
-      for (const page of allPages) {
-        if (!("properties" in page)) continue;
-        const safePage = page as any;
-        const props = safePage.properties ?? {};
-        results.push({
-          id: safePage.id,
-          title: getTitle(props),
-          due: getDue(props),
-          status: getStatus(props),
-          area: getArea(props),
-          taskType: getTaskType(props),
-          parentId: getParentId(props),
-          allAssigneeNames: getAllAssigneeNames(props),
-          otherAssignees: getOtherAssigneeNames(props, myUserId || undefined),
-          databaseId: dbId,
-          database: dbMeta[dbId]?.name ?? dbId.slice(0, 6),
-          databaseIcon: dbMeta[dbId]?.icon,
-          pageIcon: extractIcon(safePage.icon),
-          isInbox: dbId === INBOX_DB || (dbMeta[dbId]?.name?.toLowerCase().includes("inbox") ?? false),
-          isAssignedToMe: myUserId ? isAssignedToUser(props, myUserId) : true,
-          isCreatedByMe: myUserId ? safePage.created_by?.id === myUserId : false,
-          url: safePage.url,
-          createdTime: safePage.created_time,
-          lastEditedTime: safePage.last_edited_time,
+          ...(filter ? { filter } : {}),
+          ...(logbook ? { sorts: [{ timestamp: "last_edited_time", direction: "descending" }] } : {}),
         });
-      }
-    } catch (error) {
-      console.error("DB ERROR", dbId, error);
+        pages.push(...res.results);
+        cursor = res.has_more && !logbook && pages.length < MAX_OPEN_PER_DB ? res.next_cursor : undefined;
+      } while (cursor);
+      pagesByDb.push({ db, schema, pages: logbook ? pages.slice(0, LOGBOOK_PER_DB) : pages });
+    } catch (e: any) {
+      console.error("Task query failed", sel.id, e?.message);
+      errors.push({
+        databaseId: sel.id,
+        message: e?.code === "object_not_found" ? "This database is no longer shared with the app" : e?.message ?? "Failed to load",
+      });
     }
-  }
-
-  results.sort((a, b) => {
-    const aDue = a.due || "9999-12-31";
-    const bDue = b.due || "9999-12-31";
-    if (aDue !== bDue) return aDue.localeCompare(bDue);
-    return String(a.title).localeCompare(String(b.title));
   });
 
-  return NextResponse.json(results);
+  await resolveUsers(notion, pagesByDb.flatMap((p) => p.pages.map((pg) => pg.created_by?.id).filter(Boolean)));
+
+  const tasks: Task[] = pagesByDb.flatMap(({ db, schema, pages }) =>
+    pages.filter((p) => "properties" in p).map((p) => pageToTask(p, schema, db.id)),
+  );
+  databases.sort((a, b) => session.dbs.findIndex((d) => d.id === a.id) - session.dbs.findIndex((d) => d.id === b.id));
+
+  return NextResponse.json({ databases, tasks, errors });
 }
 
+// POST /api/tasks { databaseId, title, due? } -> creates a task assigned to me
 export async function POST(req: Request) {
+  const auth = await requireSession();
+  if (auth.error) return auth.error;
+  const { session, notion } = auth;
+
+  const { databaseId, title, due } = (await req.json().catch(() => ({}))) as { databaseId?: string; title?: string; due?: string };
+  if (!databaseId || !title?.trim()) {
+    return NextResponse.json({ error: "databaseId and title are required" }, { status: 400 });
+  }
+  if (!session.dbs.some((d) => d.id === databaseId)) {
+    return NextResponse.json({ error: "That database isn't selected in Settings" }, { status: 403 });
+  }
+
   try {
-    const body = await req.json();
-    const { title, databaseId, status } = body as {
-      title: string;
-      databaseId: string;
-      status?: string;
+    const raw = await retrieveDatabase(notion, session.token, databaseId);
+    const schema = analyzeSchema(raw);
+    const properties: Record<string, any> = {
+      [schema.title]: { title: [{ text: { content: title.trim() } }] },
     };
+    if (due && schema.due) properties[schema.due] = { date: { start: due } };
+    if (schema.assignee) properties[schema.assignee] = { people: [{ id: session.userId }] };
 
-    if (!title || !databaseId) {
-      return NextResponse.json({ error: "title and databaseId are required" }, { status: 400 });
-    }
-
-    // Retrieve DB schema to find the title property key and status type
-    const db = await notion.databases.retrieve({ database_id: databaseId }) as any;
-    const dbProps = db.properties || {};
-
-    // Build properties object
-    const properties: Record<string, any> = {};
-
-    // Set title
-    for (const [key, prop] of Object.entries(dbProps)) {
-      if ((prop as any).type === "title") {
-        properties[key] = { title: [{ text: { content: title } }] };
-        break;
-      }
-    }
-
-    // Set status if provided
-    if (status) {
-      if (dbProps["Status"]?.type === "status") {
-        properties["Status"] = { status: { name: status } };
-      } else if (dbProps["Status"]?.type === "select") {
-        properties["Status"] = { select: { name: status } };
-      } else {
-        for (const [key, prop] of Object.entries(dbProps)) {
-          if ((prop as any).type === "status") {
-            properties[key] = { status: { name: status } };
-            break;
-          }
-          if ((prop as any).type === "select") {
-            properties[key] = { select: { name: status } };
-            break;
-          }
-        }
-      }
-    }
-
-    const page = await notion.pages.create({
-      parent: { database_id: databaseId },
-      properties,
-    }) as any;
-
-    const labels = getDatabaseLabels();
-    const dbTitle = (db.title || []).map((t: any) => t.plain_text).join("") || databaseId.slice(0, 6);
-    return NextResponse.json({
-      id: page.id,
-      title,
-      status: status || "Unknown",
-      databaseId,
-      database: labels[databaseId] || dbTitle,
-      databaseIcon: extractIcon(db.icon),
-      isInbox: databaseId === INBOX_DB || dbTitle.toLowerCase().includes("inbox"),
-      allAssigneeNames: [],
-      otherAssignees: [],
-      url: page.url,
-      createdTime: page.created_time,
-      lastEditedTime: page.last_edited_time,
-    });
-  } catch (error) {
-    console.error("POST task error", error);
-    return NextResponse.json({ error: "Failed to create task" }, { status: 500 });
+    const page = await notion.pages.create({ parent: { database_id: databaseId }, properties });
+    await resolveUsers(notion, [session.userId]);
+    return NextResponse.json(pageToTask(page, schema, raw.id));
+  } catch (e: any) {
+    console.error("Create task failed", e?.message);
+    return NextResponse.json({ error: e?.message ?? "Failed to create task" }, { status: 500 });
   }
 }

@@ -1,1063 +1,479 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  Calendar,
-  Check,
-  ChevronDown,
-  ChevronLeft,
-  Inbox,
-  Layers,
-  Menu,
-  Plus,
-  RefreshCw,
-  Search,
-  Send,
-  Star,
-  X,
-} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, ChevronLeft, Loader2, Plus, Search, X } from "lucide-react";
+import { api, dayOnly, daysBetween, localDateStr, parseDate, readCache, writeCache } from "@/app/lib/client";
+import type { Me, Task, TaskDatabase } from "@/lib/types";
+import { MobileHome, Sidebar, type Counts } from "./components/Nav";
+import { Settings } from "./components/Settings";
+import { DayHeader, NewTaskCard, SectionHeader, TaskList, type Section } from "./components/TaskList";
+import { DbIcon, ListIcon, SMART_LISTS, type ListId } from "./components/ui";
+import { Welcome } from "./components/Welcome";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+type TasksResponse = { databases: TaskDatabase[]; tasks: Task[]; errors: { databaseId: string; message: string }[] };
 
-type NavView = "inbox" | "today" | "upcoming" | "anytime" | "delegated" | "source";
+const byDue = (a: Task, b: Task) => (a.due ?? "9999").localeCompare(b.due ?? "9999") || a.title.localeCompare(b.title);
 
-type Task = {
-  id: string;
-  title: string;
-  due?: string;
-  status: string;
-  area?: string;
-  taskType?: string;
-  parentId?: string;
-  databaseId: string;
-  database: string;
-  databaseIcon?: string;
-  pageIcon?: string;
-  isInbox: boolean;
-  isAssignedToMe: boolean;
-  isCreatedByMe: boolean;
-  allAssigneeNames: string[];
-  otherAssignees: string[];
-  url: string;
-  createdTime: string;
-  lastEditedTime: string;
-};
-
-type TaskDatabase = {
-  id: string;
-  name: string;
-  icon?: string;
-  statuses: string[];
-  areas: string[];
-  isInbox: boolean;
-};
-
-type TaskDetail = {
-  page: any;
-  blocks: any[];
-  bodyText?: string;
-};
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function getTodayStr() {
-  return new Date().toISOString().split("T")[0];
+function readHash(): ListId | null {
+  const h = decodeURIComponent(window.location.hash.slice(1));
+  if (SMART_LISTS.some((l) => l.id === h) || h.startsWith("db:")) return h as ListId;
+  return null;
 }
-
-function isDoneStatus(s: string) {
-  const l = s.toLowerCase();
-  return l.includes("done") || l.includes("complete") || l.includes("finish") || l.includes("closed");
-}
-
-function isInProgressStatus(s: string) {
-  const l = s.toLowerCase();
-  return (
-    l.includes("progress") || l.includes("active") || l.includes("doing") ||
-    (l.includes("started") && !l.includes("not start")) ||
-    l.includes("working") || l.includes("ongoing") || l.includes("discussion")
-  );
-}
-
-function isCancelledStatus(s: string) {
-  const l = s.toLowerCase();
-  return l.includes("cancel") || l.includes("wont") || l.includes("won't") || l.includes("skip") || l.includes("archive");
-}
-
-function isOverdue(due: string, today: string) { return due < today; }
-function isToday(due: string, today: string) { return due === today; }
-
-function formatDate(date?: string): string {
-  if (!date) return "";
-  const d = new Date(`${date}T00:00:00`);
-  if (isNaN(d.getTime())) return "";
-  const today = getTodayStr();
-  if (date === today) return "Today";
-  const prev = new Date(today); prev.setDate(prev.getDate() - 1);
-  if (date === prev.toISOString().split("T")[0]) return "Yesterday";
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-function formatGroupLabel(date: string): string {
-  const d = new Date(`${date}T00:00:00`);
-  if (isNaN(d.getTime())) return date;
-  const today = new Date(getTodayStr() + "T00:00:00");
-  const diff = Math.round((d.getTime() - today.getTime()) / 86400000);
-  if (diff === 1) return "Tomorrow";
-  if (diff > 1 && diff <= 6) return d.toLocaleDateString(undefined, { weekday: "long" });
-  return d.toLocaleDateString(undefined, { month: "long", day: "numeric" });
-}
-
-function getPropValueDisplay(prop: any): string {
-  if (!prop) return "";
-  if (prop.type === "status") return prop.status?.name || "";
-  if (prop.type === "select") return prop.select?.name || "";
-  if (prop.type === "date") return prop.date?.start || "";
-  if (prop.type === "people") return (prop.people || []).map((p: any) => p.name).filter(Boolean).join(", ");
-  if (prop.type === "rich_text") return (prop.rich_text || []).map((t: any) => t.plain_text).join("").slice(0, 120);
-  if (prop.type === "title") return (prop.title || []).map((t: any) => t.plain_text).join("");
-  if (prop.type === "number") return prop.number?.toString() || "";
-  if (prop.type === "checkbox") return prop.checkbox ? "Yes" : "No";
-  if (prop.type === "url") return prop.url || "";
-  if (prop.type === "email") return prop.email || "";
-  if (prop.type === "phone_number") return prop.phone_number || "";
-  if (prop.type === "multi_select") return (prop.multi_select || []).map((o: any) => o.name).join(", ");
-  if (prop.type === "relation") return `${(prop.relation || []).length} linked`;
-  if (prop.type === "formula") return prop.formula?.string || prop.formula?.number?.toString() || "";
-  return "";
-}
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const DB_ICON_MAP: { match: string; src: string }[] = [
-  { match: "discussion", src: "/icons/discussion.png" },
-  { match: "elt",        src: "/icons/elt.png" },
-  { match: "thing",      src: "/icons/home.png" },  // check before "task"
-  { match: "task",       src: "/icons/task.png" },
-];
-
-function getDbIcon(dbName: string): string | null {
-  const lower = dbName.toLowerCase();
-  return DB_ICON_MAP.find(e => lower.includes(e.match))?.src ?? null;
-}
-
-function DbIconBadge({ dbName, size = "sm" }: { dbName: string; size?: "sm" | "md" }) {
-  const src = getDbIcon(dbName);
-  const px = size === "md" ? 18 : 14;
-  if (src) {
-    return (
-      <img src={src} width={px} height={px} alt={dbName}
-        className="shrink-0 object-contain"
-        style={{ mixBlendMode: "multiply" }} />
-    );
-  }
-  return <Layers className={`shrink-0 ${size === "md" ? "h-4 w-4" : "h-3.5 w-3.5"} text-stone-400`} />;
-}
-
-// ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function Home() {
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const [me, setMe] = useState<Me | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
   const [databases, setDatabases] = useState<TaskDatabase[]>([]);
-  const [navView, setNavView] = useState<NavView>("today");
-  const [dbFilter, setDbFilter] = useState<string | null>(null);
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [loadErrors, setLoadErrors] = useState<TasksResponse["errors"]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [logbook, setLogbook] = useState<Task[] | null>(null);
+
+  const [list, setList] = useState<ListId | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState("");
-  const [showSearch, setShowSearch] = useState(false);
-  const [hideDone, setHideDone] = useState(true);
-  const [composeOpen, setComposeOpen] = useState(false);
-  const [composeTitle, setComposeTitle] = useState("");
-  const [composeDb, setComposeDb] = useState("");
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [showMobileNav, setShowMobileNav] = useState(false);
-  const [projectFilter, setProjectFilter] = useState<string | null>(null);
-  const mainRef = useRef<HTMLDivElement>(null);
-  const touchStartY = useRef(0);
-
-  function defaultInboxId(dbs: TaskDatabase[]) {
-    return dbs.find(d => d.isInbox)?.id || dbs.find(d => d.name.toLowerCase().includes("inbox"))?.id || dbs[0]?.id || "";
-  }
-
-  function doRefresh(spinner = false) {
-    if (spinner) setIsRefreshing(true);
-    const t = fetch("/api/tasks")
-      .then(r => r.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          setTasks(data);
-          try { localStorage.setItem("notion-tasks-cache-v2", JSON.stringify(data)); } catch {}
-        }
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-    const d = fetch("/api/databases")
-      .then(r => r.json())
-      .then((data: TaskDatabase[]) => {
-        if (Array.isArray(data)) {
-          setDatabases(data.map((d: any) => ({ ...d, areas: d.areas ?? [] })));
-          try { localStorage.setItem("notion-dbs-cache-v2", JSON.stringify(data)); } catch {}
-          setComposeDb(defaultInboxId(data));
-        }
-      })
-      .catch(() => {});
-    Promise.all([t, d]).finally(() => setIsRefreshing(false));
-  }
-
-  useEffect(() => {
-    try { const c = localStorage.getItem("notion-tasks-cache-v2"); if (c) { const p = JSON.parse(c); if (Array.isArray(p)) { setTasks(p); setLoading(false); } } } catch {}
-    try { const c = localStorage.getItem("notion-dbs-cache-v2"); if (c) { const p: TaskDatabase[] = JSON.parse(c); if (Array.isArray(p)) { setDatabases(p.map(d => ({ ...d, areas: d.areas ?? [] }))); setComposeDb(defaultInboxId(p)); } } } catch {}
-    doRefresh();
-  }, []); // eslint-disable-line
-
-  // Pull-to-refresh
-  useEffect(() => {
-    const el = mainRef.current;
-    if (!el) return;
-    const onStart = (e: TouchEvent) => { touchStartY.current = e.touches[0].clientY; };
-    const onEnd = (e: TouchEvent) => {
-      if (el.scrollTop > 0) return;
-      if (e.changedTouches[0].clientY - touchStartY.current > 80) doRefresh(true);
-    };
-    el.addEventListener("touchstart", onStart, { passive: true });
-    el.addEventListener("touchend", onEnd, { passive: true });
-    return () => { el.removeEventListener("touchstart", onStart); el.removeEventListener("touchend", onEnd); };
-  }, []); // eslint-disable-line
-
-  // Derived task slices
-  const today = getTodayStr();
-  const isProject = (t: Task) => t.taskType?.toLowerCase() === "project" || t.taskType?.toLowerCase() === "area";
-  const inboxTasks = useMemo(() => tasks.filter(t => t.isInbox && !isProject(t)), [tasks]);
-  const assignedNonInbox = useMemo(() => tasks.filter(t => !t.isInbox && t.isAssignedToMe && !isProject(t)), [tasks]);
-  const nonInboxTasks = useMemo(() => tasks.filter(t => !t.isInbox && !isProject(t)), [tasks]);
-  const delegatedTasks = useMemo(() => tasks.filter(t => !t.isInbox && t.isCreatedByMe && !t.isAssignedToMe), [tasks]);
-  const todayTasks = useMemo(() => assignedNonInbox.filter(t => t.due && (isToday(t.due, today) || isOverdue(t.due, today))), [assignedNonInbox, today]);
-  const upcomingTasks = useMemo(() => nonInboxTasks.filter(t => t.due && !isToday(t.due, today) && !isOverdue(t.due, today)), [nonInboxTasks, today]);
-  const anytimeTasks = useMemo(() => nonInboxTasks.filter(t => !t.due), [nonInboxTasks]);
-
-  const counts = useMemo(() => ({
-    inbox:     inboxTasks.filter(t => !isDoneStatus(t.status) && !!t.due).length,
-    today:     todayTasks.filter(t => !isDoneStatus(t.status)).length,
-    upcoming:  upcomingTasks.filter(t => !isDoneStatus(t.status)).length,
-    anytime:   0, // no due dates in this view, never show a count
-    delegated: delegatedTasks.filter(t => !isDoneStatus(t.status) && !!t.due).length,
-  }), [inboxTasks, todayTasks, upcomingTasks, anytimeTasks, delegatedTasks]);
-
-  const baseTasks = useMemo(() => {
-    switch (navView) {
-      case "inbox": return inboxTasks;
-      case "today": return todayTasks;
-      case "upcoming": return upcomingTasks;
-      case "anytime": return anytimeTasks;
-      case "delegated": return delegatedTasks;
-      case "source": {
-        if (!dbFilter) return [];
-        if (projectFilter) return tasks.filter(t => t.databaseId === dbFilter && t.parentId === projectFilter);
-        return tasks.filter(t => t.databaseId === dbFilter && !isProject(t));
-      }
-      default: return assignedNonInbox;
-    }
-  }, [navView, inboxTasks, todayTasks, upcomingTasks, anytimeTasks, delegatedTasks, assignedNonInbox, tasks, dbFilter, projectFilter]);
-
-  const filteredTasks = useMemo(() => {
-    let ts = hideDone ? baseTasks.filter(t => !isDoneStatus(t.status) && !isCancelledStatus(t.status)) : baseTasks;
-    // dbFilter already baked into baseTasks for "source" view — only apply for sidebar filter on other views
-    if (dbFilter && navView !== "source") ts = ts.filter(t => t.databaseId === dbFilter);
-    const q = query.trim().toLowerCase();
-    if (q) ts = ts.filter(t => `${t.title} ${t.database} ${t.otherAssignees.join(" ")}`.toLowerCase().includes(q));
-    return ts;
-  }, [baseTasks, hideDone, dbFilter, navView, query]);
-
-  const taskGroups = useMemo(() => {
-    if (navView === "today") {
-      const overdue = filteredTasks.filter(t => t.due && isOverdue(t.due, today)).sort((a, b) => a.due!.localeCompare(b.due!));
-      const todayItems = filteredTasks.filter(t => !t.due || isToday(t.due, today));
-      const groups: { label: string | null; tasks: Task[]; accent?: string }[] = [];
-      if (overdue.length) groups.push({ label: "Overdue", tasks: overdue, accent: "text-red-500" });
-      if (todayItems.length) groups.push({ label: null, tasks: todayItems });
-      return groups.length ? groups : [{ label: null, tasks: [] as Task[] }];
-    }
-    if (navView === "upcoming") {
-      const byDate = new Map<string, Task[]>();
-      for (const t of filteredTasks) {
-        if (!byDate.has(t.due!)) byDate.set(t.due!, []);
-        byDate.get(t.due!)!.push(t);
-      }
-      return Array.from(byDate.entries())
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([date, tasks]) => ({ label: formatGroupLabel(date), tasks, accent: undefined }));
-    }
-    if (navView === "source") {
-      const sorted = [...filteredTasks].sort((a, b) => {
-        const da = a.due || "9999-12-31", db2 = b.due || "9999-12-31";
-        return da !== db2 ? da.localeCompare(db2) : a.title.localeCompare(b.title);
-      });
-      return [{ label: null as string | null, tasks: sorted, accent: undefined }];
-    }
-    return [{ label: null as string | null, tasks: filteredTasks, accent: undefined }];
-  }, [filteredTasks, navView, today]);
-
-  function patchLocal(id: string, updates: Partial<Task>) {
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, ...updates, lastEditedTime: new Date().toISOString() } : t));
-  }
-
-  async function patchTask(id: string, updates: Partial<Task>) {
-    patchLocal(id, updates);
-    try {
-      await fetch(`/api/tasks/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updates),
-      });
-    } catch {}
-  }
-
-  async function createTask() {
-    const title = composeTitle.trim();
-    if (!title || !composeDb) return;
-    const db = databases.find(d => d.id === composeDb);
-    const optimisticStatus = db?.statuses[0] || "Not started";
-    const tempId = `temp-${Date.now()}`;
-    const opt: Task = {
-      id: tempId, title, status: optimisticStatus,
-      databaseId: composeDb, database: db?.name || composeDb.slice(0, 6),
-      isInbox: db ? (db.isInbox || db.name.toLowerCase().includes("inbox")) : false,
-      isAssignedToMe: true, isCreatedByMe: true,
-      allAssigneeNames: [], otherAssignees: [],
-      url: "", createdTime: new Date().toISOString(), lastEditedTime: new Date().toISOString(),
-    };
-    setTasks(prev => [opt, ...prev]);
-    setComposeTitle(""); setComposeOpen(false);
-    try {
-      const res = await fetch("/api/tasks", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, databaseId: composeDb, status: optimisticStatus }),
-      });
-      if (res.ok) {
-        const created = await res.json();
-        setTasks(prev => prev.map(t => t.id === tempId ? { ...opt, ...created } : t));
-      } else { setTasks(prev => prev.filter(t => t.id !== tempId)); }
-    } catch { setTasks(prev => prev.filter(t => t.id !== tempId)); }
-  }
-
-  const selectedTask = tasks.find(t => t.id === selectedTaskId) ?? null;
-  const nonInboxDbs = databases.filter(d => !d.isInbox);
-  const sourceDbName = dbFilter ? databases.find(d => d.id === dbFilter)?.name ?? "" : "";
-  const thingsDb = databases.find(d => d.name.toLowerCase().includes("thing"))
-    ?? databases.find(d => d.areas.length > 0)
-    ?? null;
-  const thingsProjects = useMemo(() =>
-    thingsDb ? tasks.filter(t => t.databaseId === thingsDb.id && t.taskType?.toLowerCase() === "project") : [],
-    [tasks, thingsDb]
-  );
-  const viewLabel = navView === "source"
-    ? (projectFilter ? (tasks.find(t => t.id === projectFilter)?.title ?? sourceDbName) : sourceDbName)
-    : { inbox: "Inbox", today: "Today", upcoming: "Upcoming", anytime: "Anytime", delegated: "Delegated" }[navView as Exclude<NavView, "source">];
-
-  const navItems: { view: NavView; label: string; mobileIcon: React.ReactNode; sidebarIcon: React.ReactNode }[] = [
-    { view: "inbox", label: "Inbox",
-      mobileIcon: <Inbox className="h-5 w-5" />,
-      sidebarIcon: <NavIcon bg="bg-blue-500"><Inbox className="h-3 w-3 text-white" /></NavIcon> },
-    { view: "today", label: "Today",
-      mobileIcon: <Star className="h-5 w-5" />,
-      sidebarIcon: <NavIcon bg="bg-yellow-400"><Star className="h-3 w-3 text-white fill-white" /></NavIcon> },
-    { view: "upcoming", label: "Upcoming",
-      mobileIcon: <Calendar className="h-5 w-5" />,
-      sidebarIcon: <NavIcon bg="bg-red-400"><Calendar className="h-3 w-3 text-white" /></NavIcon> },
-    { view: "anytime", label: "Anytime",
-      mobileIcon: <Layers className="h-5 w-5" />,
-      sidebarIcon: <NavIcon bg="bg-teal-500"><Layers className="h-3 w-3 text-white" /></NavIcon> },
-    { view: "delegated", label: "Delegated",
-      mobileIcon: <Send className="h-5 w-5" />,
-      sidebarIcon: <NavIcon bg="bg-stone-400"><Send className="h-3 w-3 text-white" /></NavIcon> },
-  ];
-
-  return (
-    <div className="flex h-[100dvh] bg-white antialiased overflow-hidden text-gray-900">
-
-      {/* ── Desktop Sidebar ── */}
-      <aside className="hidden md:flex w-56 shrink-0 flex-col bg-[#F0EDE8] border-r border-[#DDD8D0] overflow-y-auto">
-        <div className="pt-10 pb-2 px-3">
-          {navItems.map(item => (
-            <SidebarNavItem key={item.view} label={item.label} icon={item.sidebarIcon}
-              count={counts[item.view]} active={navView === item.view && !dbFilter}
-              onClick={() => { setNavView(item.view); setDbFilter(null); setProjectFilter(null); setQuery(""); }} />
-          ))}
-        </div>
-        {nonInboxDbs.length > 0 && (
-          <div className="mt-2 pt-3 border-t border-[#DDD8D0] px-3 pb-4">
-            <p className="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-[#B0AA9F]">Databases</p>
-            {nonInboxDbs.map((db) => (
-              <button key={db.id}
-                onClick={() => { setNavView("source"); setDbFilter(db.id); setProjectFilter(null); setQuery(""); }}
-                className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-[13px] transition-colors ${
-                  navView === "source" && dbFilter === db.id && !projectFilter ? "bg-white shadow-sm text-gray-900 font-medium" : "text-[#4A453D] hover:bg-[#E5E0D8]"
-                }`}
-              >
-                <DbIconBadge dbName={db.name} />
-                <span className="truncate">{db.name}</span>
-              </button>
-            ))}
-          </div>
-        )}
-        {thingsProjects.length > 0 && (
-          <div className="pt-3 border-t border-[#DDD8D0] px-3 pb-4">
-            <p className="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-[#B0AA9F]">Projects</p>
-            {thingsProjects.map(proj => (
-              <button key={proj.id}
-                onClick={() => { setNavView("source"); setDbFilter(thingsDb!.id); setProjectFilter(proj.id); setQuery(""); }}
-                className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-[13px] transition-colors ${
-                  projectFilter === proj.id ? "bg-white shadow-sm text-gray-900 font-medium" : "text-[#4A453D] hover:bg-[#E5E0D8]"
-                }`}
-              >
-                <DbIconBadge dbName="Things" />
-                <span className="truncate">{proj.title}</span>
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="mt-auto px-5 pb-6">
-          {isRefreshing && (
-            <div className="flex items-center gap-1.5 text-[11px] text-[#B0AA9F]">
-              <RefreshCw className="h-3 w-3 animate-spin" /><span>Syncing…</span>
-            </div>
-          )}
-        </div>
-      </aside>
-
-      {/* ── Mobile Nav Page (full-screen, mobile only) ── */}
-      {showMobileNav && (
-        <MobileNavPage
-          navView={navView} dbFilter={dbFilter} counts={counts}
-          navItems={navItems} nonInboxDbs={nonInboxDbs} databases={databases}
-          thingsProjects={thingsProjects}
-          onNav={(view) => { setNavView(view); setDbFilter(null); setProjectFilter(null); setSelectedTaskId(null); setShowMobileNav(false); }}
-          onSource={(id) => { setNavView("source"); setDbFilter(id); setProjectFilter(null); setSelectedTaskId(null); setShowMobileNav(false); }}
-          onProject={(id) => { setNavView("source"); setDbFilter(thingsDb?.id ?? null); setProjectFilter(id); setSelectedTaskId(null); setShowMobileNav(false); }}
-          onClose={() => setShowMobileNav(false)}
-        />
-      )}
-
-      {/* ── Main content ── */}
-      <div className={`flex flex-1 flex-col min-w-0 ${showMobileNav ? "hidden md:flex" : ""}`}>
-
-        {/* Header */}
-        <header className="flex-none bg-white px-5 md:px-8 pt-5 md:pt-8 pb-2">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex items-center gap-2">
-              {/* Hamburger — mobile only */}
-              <button onClick={() => setShowMobileNav(true)}
-                className="md:hidden p-1.5 -ml-1 rounded-full text-stone-400 hover:bg-stone-100 transition-colors">
-                <Menu className="h-5 w-5" />
-              </button>
-              <h1 className="text-[26px] font-bold leading-tight">{viewLabel}</h1>
-            </div>
-            <div className="flex items-center gap-1 pt-1">
-              {isRefreshing && <RefreshCw className="h-3.5 w-3.5 animate-spin text-stone-400 md:hidden" />}
-              <button onClick={() => { setShowSearch(v => !v); if (showSearch) setQuery(""); }}
-                className={`p-2 rounded-full transition-colors ${showSearch ? "bg-blue-50 text-blue-500" : "text-stone-400 hover:bg-stone-100"}`}>
-                <Search className="h-4 w-4" />
-              </button>
-              <button onClick={() => doRefresh(true)}
-                className="hidden md:flex p-2 rounded-full text-stone-400 hover:bg-stone-100 transition-colors">
-                <RefreshCw className="h-4 w-4" />
-              </button>
-              <button onClick={() => setHideDone(v => !v)}
-                className="hidden md:flex items-center px-3 py-1.5 rounded-full text-xs text-stone-500 bg-stone-100 hover:bg-stone-200 transition-colors">
-                {hideDone ? "Show done" : "Hide done"}
-              </button>
-            </div>
-          </div>
-          {showSearch && (
-            <div className="mt-2 flex items-center gap-2 rounded-xl bg-stone-100 px-3 py-2">
-              <Search className="h-3.5 w-3.5 shrink-0 text-stone-400" />
-              <input autoFocus value={query} onChange={e => setQuery(e.target.value)}
-                placeholder="Search tasks…" style={{ fontSize: "16px" }}
-                className="flex-1 bg-transparent text-gray-900 outline-none placeholder:text-stone-400 text-sm" />
-              {query && <button onClick={() => setQuery("")}><X className="h-3.5 w-3.5 text-stone-400" /></button>}
-            </div>
-          )}
-        </header>
-
-        {/* Task list */}
-        <main ref={mainRef} className="flex-1 overflow-y-auto px-5 md:px-8 pb-32 md:pb-8">
-          {loading ? <LoadingState /> : filteredTasks.length === 0 ? (
-            <EmptyState navView={navView} hasQuery={!!query} sourceName={sourceDbName} />
-          ) : (
-            <div className="pt-1">
-              {taskGroups.map((group, gi) => (
-                <div key={gi}>
-                  {group.label && (
-                    <div className={`flex items-center gap-3 pt-5 pb-1.5 ${group.accent ?? "text-stone-400"}`}>
-                      <span className="text-[11px] font-semibold uppercase tracking-widest whitespace-nowrap">{group.label}</span>
-                      <div className="flex-1 h-px bg-stone-100" />
-                    </div>
-                  )}
-                  {group.tasks.map(task => (
-                    <TaskRow key={task.id} task={task}
-                      statuses={databases.find(d => d.id === task.databaseId)?.statuses ?? [task.status]}
-                      showDb={navView !== "inbox" && navView !== "source"} today={today}
-                      onClick={() => setSelectedTaskId(task.id)} onPatch={patchTask} />
-                  ))}
-                </div>
-              ))}
-            </div>
-          )}
-        </main>
-      </div>
-
-      {/* ── FAB ── */}
-      <button onClick={() => setComposeOpen(true)}
-        className="fixed bottom-6 right-4 md:right-6 z-20 flex h-14 w-14 md:h-12 md:w-12 items-center justify-center rounded-full bg-blue-500 shadow-lg shadow-blue-500/30 text-white transition-all hover:bg-blue-600 active:scale-95">
-        <Plus className="h-6 w-6 md:h-5 md:w-5" />
-      </button>
-
-      {composeOpen && (
-        <ComposeSheet title={composeTitle} setTitle={setComposeTitle}
-          destination={composeDb} setDestination={setComposeDb}
-          databases={databases} onClose={() => setComposeOpen(false)} onSubmit={createTask} />
-      )}
-
-      {selectedTask && (
-        <TaskDetailPanel task={selectedTask}
-          database={databases.find(d => d.id === selectedTask.databaseId) ?? null}
-          onClose={() => setSelectedTaskId(null)} onPatch={patchTask} />
-      )}
-    </div>
-  );
-}
-
-// ─── NavIcon ──────────────────────────────────────────────────────────────────
-
-function NavIcon({ bg, children }: { bg: string; children: React.ReactNode }) {
-  return (
-    <div className={`w-5 h-5 rounded-[5px] ${bg} flex items-center justify-center shrink-0`}>
-      {children}
-    </div>
-  );
-}
-
-// ─── SidebarNavItem ───────────────────────────────────────────────────────────
-
-function SidebarNavItem({ label, icon, count, active, onClick }: {
-  label: string; icon: React.ReactNode; count: number; active: boolean; onClick: () => void;
-}) {
-  return (
-    <button onClick={onClick}
-      className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-[13px] font-medium transition-colors mb-0.5 ${
-        active ? "bg-white shadow-sm text-gray-900" : "text-[#4A453D] hover:bg-[#E5E0D8]"
-      }`}>
-      {icon}
-      <span className="flex-1 text-left">{label}</span>
-      {count > 0 && (
-        <span className={`text-xs font-semibold tabular-nums ${active ? "text-stone-500" : "text-[#B0AA9F]"}`}>{count}</span>
-      )}
-    </button>
-  );
-}
-
-// ─── MobileNavPage ────────────────────────────────────────────────────────────
-
-function MobileNavPage({ navView, dbFilter, counts, navItems, nonInboxDbs, databases, thingsProjects, onNav, onSource, onProject, onClose }: {
-  navView: NavView; dbFilter: string | null;
-  counts: Record<string, number>;
-  navItems: { view: NavView; label: string; mobileIcon: React.ReactNode; sidebarIcon: React.ReactNode }[];
-  nonInboxDbs: TaskDatabase[]; databases: TaskDatabase[];
-  thingsProjects: Task[];
-  onNav: (v: NavView) => void; onSource: (id: string) => void; onProject: (id: string) => void; onClose: () => void;
-}) {
-  const navIconBgs: Record<NavView, string> = {
-    inbox: "bg-blue-500", today: "bg-yellow-400", upcoming: "bg-red-400",
-    anytime: "bg-teal-500", delegated: "bg-stone-400", source: "bg-stone-200",
-  };
-
-  return (
-    <div className="flex-1 bg-[#F0EDE8] flex flex-col overflow-y-auto">
-      {/* Back button */}
-      <div className="flex items-center px-4 pt-14 pb-5">
-        <button onClick={onClose}
-          className="flex items-center gap-1 text-blue-500 active:opacity-60 transition-opacity">
-          <ChevronLeft className="h-5 w-5" />
-          <span className="text-[17px] font-medium">Back</span>
-        </button>
-      </div>
-
-      {/* Primary nav items */}
-      <div className="px-4 pb-3">
-        {navItems.map(item => {
-          const active = navView === item.view && !dbFilter;
-          const cnt = counts[item.view as string] ?? 0;
-          return (
-            <button key={item.view} onClick={() => onNav(item.view)}
-              className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl mb-1.5 transition-colors ${
-                active ? "bg-white shadow-sm" : "active:bg-[#E5E0D8]"
-              }`}>
-              <div className={`w-10 h-10 rounded-xl ${navIconBgs[item.view]} flex items-center justify-center shrink-0`}>
-                <span className="text-white [&>svg]:h-5 [&>svg]:w-5">{item.mobileIcon}</span>
-              </div>
-              <span className={`flex-1 text-left text-[17px] font-medium ${active ? "text-gray-900" : "text-[#4A453D]"}`}>
-                {item.label}
-              </span>
-              {cnt > 0 && (
-                <span className={`text-[15px] font-semibold tabular-nums ${active ? "text-stone-500" : "text-[#B0AA9F]"}`}>
-                  {cnt}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Databases */}
-      {nonInboxDbs.length > 0 && (
-        <div className="mt-1 pt-4 border-t border-[#DDD8D0] px-4 pb-3">
-          <p className="px-1 mb-2 text-[11px] font-semibold uppercase tracking-widest text-[#B0AA9F]">Databases</p>
-          {nonInboxDbs.map(db => {
-            const active = navView === "source" && dbFilter === db.id;
-            return (
-              <button key={db.id} onClick={() => onSource(db.id)}
-                className={`w-full flex items-center gap-4 px-4 py-3 rounded-2xl mb-1 transition-colors ${
-                  active ? "bg-white shadow-sm" : "active:bg-[#E5E0D8]"
-                }`}>
-                <div className="w-10 h-10 rounded-xl bg-white/60 flex items-center justify-center shrink-0">
-                  <DbIconBadge dbName={db.name} size="md" />
-                </div>
-                <span className={`flex-1 text-left text-[17px] font-medium ${active ? "text-gray-900" : "text-[#4A453D]"}`}>
-                  {db.name}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Projects (from Things DB) */}
-      {thingsProjects.length > 0 && (
-        <div className="mt-1 pt-4 border-t border-[#DDD8D0] px-4 pb-6">
-          <p className="px-1 mb-2 text-[11px] font-semibold uppercase tracking-widest text-[#B0AA9F]">Projects</p>
-          {thingsProjects.map(proj => (
-            <button key={proj.id} onClick={() => onProject(proj.id)}
-              className="w-full flex items-center gap-4 px-4 py-3 rounded-2xl mb-1 active:bg-[#E5E0D8] transition-colors">
-              <div className="w-10 h-10 rounded-xl bg-white/60 flex items-center justify-center shrink-0">
-                <DbIconBadge dbName="Things" size="md" />
-              </div>
-              <span className="flex-1 text-left text-[17px] font-medium text-[#4A453D] truncate">
-                {proj.title}
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── StatusCircle ─────────────────────────────────────────────────────────────
-
-function StatusCircle({ status, statuses, onStatusChange }: {
-  status: string; statuses: string[]; onStatusChange: (s: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [dropPos, setDropPos] = useState({ top: 0, left: 0 });
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const done = isDoneStatus(status);
-  const inProgress = !done && isInProgressStatus(status);
-  const cancelled = !done && isCancelledStatus(status);
-
-  function handleClick(e: React.MouseEvent) {
-    e.stopPropagation();
-    if (btnRef.current) {
-      const r = btnRef.current.getBoundingClientRect();
-      setDropPos({ top: r.bottom + 6, left: r.left });
-    }
-    setOpen(v => !v);
-  }
-
-  return (
-    <div className="relative shrink-0" onClick={e => e.stopPropagation()}>
-      <button ref={btnRef} onClick={handleClick}
-        className={`flex h-[22px] w-[22px] items-center justify-center rounded-full border-2 transition-all duration-150 active:scale-90 ${
-          done ? "border-stone-300 bg-stone-300" :
-          inProgress ? "border-blue-400 bg-blue-50" :
-          cancelled ? "border-stone-200 bg-stone-100" :
-          "border-stone-300 hover:border-stone-400 bg-white"
-        }`}>
-        {done && <Check className="h-3 w-3 text-stone-500" strokeWidth={3} />}
-        {cancelled && !done && <X className="h-2.5 w-2.5 text-stone-400" strokeWidth={3} />}
-        {inProgress && !done && <div className="h-1.5 w-1.5 rounded-full bg-blue-400" />}
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="fixed z-50 min-w-[160px] overflow-hidden rounded-xl bg-white border border-stone-200 shadow-xl py-1"
-            style={{ top: dropPos.top, left: dropPos.left }}>
-            {statuses.map(s => (
-              <button key={s} onClick={(e) => { e.stopPropagation(); onStatusChange(s); setOpen(false); }}
-                className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors hover:bg-stone-50 ${
-                  s === status ? "font-semibold text-gray-900" : "text-stone-600"
-                }`}>
-                <span className={`h-2.5 w-2.5 shrink-0 rounded-full border-2 ${
-                  isDoneStatus(s) ? "border-stone-300 bg-stone-300" :
-                  isInProgressStatus(s) ? "border-blue-400 bg-blue-50" :
-                  "border-stone-300 bg-white"
-                }`} />
-                {s}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-// ─── TaskRow ──────────────────────────────────────────────────────────────────
-
-function TaskRow({ task, statuses, showDb, today, onClick, onPatch }: {
-  task: Task; statuses: string[];
-  showDb: boolean; today: string;
-  onClick: () => void; onPatch: (id: string, updates: Partial<Task>) => void;
-}) {
-  const done = isDoneStatus(task.status);
-  const overdue = task.due && isOverdue(task.due, today) && !done;
-  const dueToday = task.due && isToday(task.due, today) && !done;
-
-  const rowRef = useRef<HTMLDivElement>(null);
-  const [swipeX, setSwipeX] = useState(0);
-  const swipeState = useRef({ active: false, startX: 0, startY: 0, locked: false });
-
-  useEffect(() => {
-    const el = rowRef.current;
-    if (!el) return;
-    const st = swipeState.current;
-
-    const onStart = (e: TouchEvent) => {
-      st.startX = e.touches[0].clientX;
-      st.startY = e.touches[0].clientY;
-      st.active = true; st.locked = false;
-    };
-    const onMove = (e: TouchEvent) => {
-      if (!st.active || st.locked) return;
-      const dx = e.touches[0].clientX - st.startX;
-      const dy = e.touches[0].clientY - st.startY;
-      if (Math.abs(dy) > Math.abs(dx)) { st.locked = true; return; }
-      if (dx > 0) { e.preventDefault(); setSwipeX(Math.min(dx, 80)); }
-    };
-    const onEnd = () => {
-      if (!st.active) return;
-      st.active = false;
-      setSwipeX(cur => {
-        if (cur > 60) {
-          const doneStatus = statuses.find(s => isDoneStatus(s)) || "Done";
-          onPatch(task.id, { status: doneStatus });
-        }
-        return 0;
-      });
-    };
-
-    el.addEventListener("touchstart", onStart, { passive: true });
-    el.addEventListener("touchmove", onMove, { passive: false });
-    el.addEventListener("touchend", onEnd, { passive: true });
-    return () => {
-      el.removeEventListener("touchstart", onStart);
-      el.removeEventListener("touchmove", onMove);
-      el.removeEventListener("touchend", onEnd);
-    };
-  }, [task.id, statuses, onPatch]);
-
-  return (
-    <div ref={rowRef} className="relative overflow-hidden">
-      {/* Swipe reveal */}
-      <div className="absolute inset-y-0 left-0 flex items-center pl-2 pointer-events-none"
-        style={{ opacity: Math.min(1, swipeX / 50) }}>
-        <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center">
-          <Check className="h-4 w-4 text-emerald-600" strokeWidth={2.5} />
-        </div>
-      </div>
-      {/* Content */}
-      <div className="flex items-center gap-3 py-2.5 px-1 -mx-1 rounded-lg cursor-pointer hover:bg-stone-50 active:bg-stone-100 transition-colors"
-        style={{ transform: swipeX === 0 ? "none" : `translateX(${swipeX}px)`, transition: swipeX === 0 ? "transform 0.25s ease" : "none" }}
-        onClick={onClick}>
-        <StatusCircle status={task.status} statuses={statuses}
-          onStatusChange={s => onPatch(task.id, { status: s })} />
-        <span className={`flex-1 min-w-0 truncate text-[15px] ${done ? "text-stone-400 line-through" : "text-gray-900"}`}>
-          {task.title}
-        </span>
-        <div className="flex items-center gap-2 shrink-0">
-          {task.due && (
-            <span className={`text-xs font-medium ${
-              overdue ? "text-red-500" : dueToday ? "text-amber-600" : "text-stone-400"
-            }`}>{formatDate(task.due)}</span>
-          )}
-          {showDb && <DbIconBadge dbName={task.database} />}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── TaskDetailPanel ──────────────────────────────────────────────────────────
-
-function TaskDetailPanel({ task, database, onClose, onPatch }: {
-  task: Task; database: TaskDatabase | null;
-  onClose: () => void; onPatch: (id: string, updates: Partial<Task>) => void;
-}) {
-  const [detail, setDetail] = useState<TaskDetail | null>(null);
-  const [detailLoading, setDetailLoading] = useState(true);
-  const [editTitle, setEditTitle] = useState(task.title);
-  const [editStatus, setEditStatus] = useState(task.status);
-  const [editDue, setEditDue] = useState(task.due || "");
-  const [propsExpanded, setPropsExpanded] = useState(false);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => { requestAnimationFrame(() => setMounted(true)); }, []);
-
-  useEffect(() => {
-    setDetailLoading(true);
-    fetch(`/api/tasks/${task.id}`)
-      .then(r => r.json()).then(d => setDetail(d))
-      .catch(() => setDetail(null)).finally(() => setDetailLoading(false));
-  }, [task.id]);
-
-  useEffect(() => { setEditTitle(task.title); }, [task.title]);
-  useEffect(() => { setEditStatus(task.status); }, [task.status]);
-  useEffect(() => { setEditDue(task.due || ""); }, [task.due]);
-
-  function handleStatusChange(s: string) { setEditStatus(s); onPatch(task.id, { status: s }); }
-  function handleDueChange(d: string) { setEditDue(d); onPatch(task.id, { due: d || undefined }); }
-  function handleTitleBlur() {
-    const t = editTitle.trim();
-    if (t && t !== task.title) onPatch(task.id, { title: t });
-  }
-
-  const statuses = database?.statuses || [task.status];
-  const allProps = Object.entries((detail?.page as any)?.properties || {})
-    .map(([key, value]: any) => ({ key, value: getPropValueDisplay(value) }))
-    .filter(p => p.value);
-
-  return (
-    <>
-      {/* Backdrop */}
-      <div className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm"
-        style={{ opacity: mounted ? 1 : 0, transition: "opacity 0.25s" }}
-        onClick={onClose} />
-
-      {/* Modal wrapper — bottom sheet on mobile, centered card on desktop */}
-      <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center md:p-6 pointer-events-none">
-        <div className="pointer-events-auto bg-white shadow-2xl flex flex-col
-          w-full rounded-t-2xl max-h-[92dvh]
-          md:rounded-2xl md:max-h-[85vh] md:w-full md:max-w-lg"
-          style={{ transform: mounted ? "none" : "translateY(40px)", opacity: mounted ? 1 : 0, transition: "transform 0.35s cubic-bezier(0.32,0.72,0,1), opacity 0.25s" }}>
-
-          {/* Mobile drag handle */}
-          <div className="md:hidden flex justify-center pt-2.5 pb-1 shrink-0">
-            <div className="w-10 h-1 rounded-full bg-stone-300" />
-          </div>
-
-          {/* Header — just close button */}
-          <div className="flex items-center justify-end px-4 py-2 shrink-0">
-            <button onClick={onClose}
-              className="p-1.5 rounded-full hover:bg-stone-100 text-stone-400 hover:text-stone-600 transition-colors">
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          {/* Body */}
-          <div className="flex-1 overflow-y-auto px-5 pb-6 pt-1">
-            <textarea value={editTitle}
-              onChange={e => { setEditTitle(e.target.value); const el = e.target; el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; }}
-              onBlur={handleTitleBlur} rows={1}
-              className="w-full resize-none overflow-hidden bg-transparent text-[20px] font-bold text-gray-900 outline-none leading-snug"
-              ref={el => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } }} />
-
-            <div className="flex items-center gap-1.5 mt-1.5 mb-4">
-              <DbIconBadge dbName={task.database} />
-              <span className="text-sm text-stone-500">{task.database}</span>
-            </div>
-
-            <div className="divide-y divide-stone-100">
-              <div className="flex items-center gap-3 py-2.5">
-                <span className="text-sm text-stone-400 w-20 shrink-0">Status</span>
-                {statuses.length > 1 ? (
-                  <div className="relative flex-1">
-                    <select value={editStatus} onChange={e => handleStatusChange(e.target.value)}
-                      className="w-full appearance-none bg-transparent text-sm text-gray-900 outline-none cursor-pointer pr-5">
-                      {statuses.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                    <ChevronDown className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-stone-400" />
-                  </div>
-                ) : <span className="text-sm text-gray-900">{editStatus}</span>}
-              </div>
-
-              <div className="flex items-center gap-3 py-2.5">
-                <span className="text-sm text-stone-400 w-20 shrink-0">Due date</span>
-                <input type="date" value={editDue} onChange={e => handleDueChange(e.target.value)}
-                  className="flex-1 bg-transparent text-sm text-gray-900 outline-none [color-scheme:light]" />
-              </div>
-
-              {task.allAssigneeNames.length > 0 && (
-                <div className="flex items-center gap-3 py-2.5">
-                  <span className="text-sm text-stone-400 w-20 shrink-0">Assignees</span>
-                  <span className="text-sm text-gray-900">{task.allAssigneeNames.join(", ")}</span>
-                </div>
-              )}
-            </div>
-
-            <div className="mt-5">
-              <p className="text-xs font-semibold uppercase tracking-widest text-stone-400 mb-2">Notes</p>
-              {detailLoading ? (
-                <div className="space-y-2">
-                  <div className="h-3 bg-stone-100 animate-pulse rounded w-3/4" />
-                  <div className="h-3 bg-stone-100 animate-pulse rounded w-1/2" />
-                </div>
-              ) : detail?.bodyText ? (
-                <p className="text-sm text-stone-600 leading-relaxed whitespace-pre-wrap">{detail.bodyText}</p>
-              ) : (
-                <p className="text-sm text-stone-300 italic">No notes on this page.</p>
-              )}
-            </div>
-
-            {!detailLoading && allProps.length > 0 && (
-              <div className="mt-5">
-                <button onClick={() => setPropsExpanded(v => !v)}
-                  className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-stone-400 hover:text-stone-600 transition-colors">
-                  <ChevronDown className={`h-3 w-3 transition-transform duration-200 ${propsExpanded ? "rotate-180" : ""}`} />
-                  All properties
-                </button>
-                {propsExpanded && (
-                  <div className="mt-2.5 space-y-2">
-                    {allProps.map(({ key, value }) => (
-                      <div key={key} className="flex items-start gap-3 text-sm">
-                        <span className="w-24 shrink-0 text-xs text-stone-400">{key}</span>
-                        <span className="min-w-0 text-stone-600 break-words">{value}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Timestamps + subtle Notion link */}
-            <div className="mt-6 pt-4 border-t border-stone-100 flex items-end justify-between">
-              <div className="text-xs text-stone-300 space-y-0.5">
-                <div>Created {new Date(task.createdTime).toLocaleString()}</div>
-                <div>Edited {new Date(task.lastEditedTime).toLocaleString()}</div>
-              </div>
-              {task.url && (
-                <a href={task.url} target="_blank" rel="noreferrer"
-                  className="flex items-center gap-1 text-xs text-stone-300 hover:text-stone-500 transition-colors"
-                  title="Open in Notion">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.14c-.093-.514.28-.887.747-.933zM1.936 1.035l13.31-.98c1.634-.14 2.055-.047 3.082.7l4.249 2.986c.7.513.934.653.934 1.213v16.378c0 1.026-.373 1.634-1.68 1.726l-15.458.934c-.98.047-1.448-.093-1.962-.747l-3.129-4.06c-.56-.747-.793-1.306-.793-1.96V2.667c0-.839.374-1.54 1.447-1.632z"/>
-                  </svg>
-                  <span>Notion</span>
-                </a>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    </>
-  );
-}
-
-// ─── ComposeSheet ─────────────────────────────────────────────────────────────
-
-function ComposeSheet({ title, setTitle, destination, setDestination, databases, onClose, onSubmit }: {
-  title: string; setTitle: (v: string) => void;
-  destination: string; setDestination: (v: string) => void;
-  databases: TaskDatabase[]; onClose: () => void; onSubmit: () => void;
-}) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [keyboardOffset, setKeyboardOffset] = useState(0);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => { requestAnimationFrame(() => setMounted(true)); inputRef.current?.focus(); }, []);
-
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-    const update = () => setKeyboardOffset(Math.max(0, window.innerHeight - vv.height - vv.offsetTop));
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
-    return () => { vv.removeEventListener("resize", update); vv.removeEventListener("scroll", update); };
+  const [completing, setCompleting] = useState<Set<string>>(new Set());
+  const [toast, setToast] = useState<string | null>(null);
+
+  const lastLoad = useRef(0);
+  const cameFromHome = useRef(false);
+  const cacheKey = me?.user ? `nt:v3:${me.user.id}` : null;
+  const today = localDateStr();
+
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    window.setTimeout(() => setToast((t) => (t === msg ? null : t)), 4000);
   }, []);
 
+  // ── Session ──
+  const loadMe = useCallback(async () => {
+    try {
+      setMe(await api<Me>("/api/me"));
+    } catch {
+      setMe({ signedIn: false });
+    }
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("auth_error")) setAuthError(params.get("auth_error"));
+    if (params.has("settings")) setSettingsOpen(true);
+    if (params.toString()) window.history.replaceState(null, "", window.location.pathname + window.location.hash);
+    setList(readHash());
+    const onHash = () => {
+      setList(readHash());
+      setExpandedId(null);
+      setAdding(false);
+    };
+    window.addEventListener("hashchange", onHash);
+    loadMe();
+    return () => window.removeEventListener("hashchange", onHash);
+  }, [loadMe]);
+
+  const handleApiError = useCallback(
+    (e: any) => {
+      if (e?.status === 401) {
+        setMe({ signedIn: false });
+        setAuthError("Your Notion session ended. Please sign in again.");
+      } else showToast(e?.message ?? "Something went wrong");
+    },
+    [showToast],
+  );
+
+  // ── Tasks ──
+  const load = useCallback(async () => {
+    if (!cacheKey) return;
+    setRefreshing(true);
+    try {
+      const r = await api<TasksResponse>("/api/tasks");
+      setDatabases(r.databases);
+      setTasks(r.tasks);
+      setLoadErrors(r.errors);
+      writeCache(cacheKey, r);
+    } catch (e) {
+      handleApiError(e);
+    } finally {
+      lastLoad.current = Date.now();
+      setRefreshing(false);
+      setLoaded(true);
+    }
+  }, [cacheKey, handleApiError]);
+
+  const ready = !!me?.signedIn && !!me.configured && !settingsOpen;
+
+  useEffect(() => {
+    if (!ready || !cacheKey) return;
+    const cached = readCache<TasksResponse>(cacheKey);
+    if (cached) {
+      setDatabases(cached.databases);
+      setTasks(cached.tasks);
+      setLoaded(true);
+    }
+    load();
+    const onVisible = () => document.visibilityState === "visible" && Date.now() - lastLoad.current > 30_000 && load();
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    const timer = window.setInterval(load, 3 * 60_000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+      window.clearInterval(timer);
+    };
+  }, [ready, cacheKey, load]);
+
+  useEffect(() => {
+    if (list !== "logbook" || !ready) return;
+    api<TasksResponse>("/api/tasks?logbook=1")
+      .then((r) => setLogbook(r.tasks.sort((a, b) => b.lastEditedTime.localeCompare(a.lastEditedTime))))
+      .catch(handleApiError);
+  }, [list, ready, handleApiError]);
+
+  // ── Navigation ──
+  const desktopList: ListId = list ?? "today";
+  const dbMap = useMemo(() => new Map(databases.map((d) => [d.id, d])), [databases]);
+
+  const select = useCallback((id: ListId) => {
+    cameFromHome.current = window.location.hash === "";
+    setSearching(false);
+    setQuery("");
+    window.location.hash = encodeURIComponent(id);
+  }, []);
+
+  const backToHome = () => {
+    if (cameFromHome.current) window.history.back();
+    else window.location.hash = "";
+    cameFromHome.current = false;
+  };
+
+  const startAdding = useCallback(() => {
+    setExpandedId(null);
+    setSearching(false);
+    if (window.location.hash === "" && window.innerWidth < 768) select("anytime");
+    setAdding(true);
+  }, [select]);
+
+  useEffect(() => {
+    if (!ready) return;
+    const onKey = (e: KeyboardEvent) => {
+      const typing = (e.target as HTMLElement)?.closest?.("input, textarea, select, [contenteditable]");
+      if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === "/") {
+        e.preventDefault();
+        setSearching(true);
+      } else if (e.key === "n") {
+        e.preventDefault();
+        startAdding();
+      } else if (e.key === "Escape") {
+        setSearching(false);
+        setQuery("");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [ready, startAdding]);
+
+  // ── Task actions ──
+  const replaceTask = useCallback((t: Task) => {
+    setTasks((prev) => prev.map((x) => (x.id === t.id ? t : x)));
+    setLogbook((prev) => prev?.map((x) => (x.id === t.id ? t : x)) ?? prev);
+  }, []);
+
+  const toggle = useCallback(
+    async (task: Task) => {
+      const reopening = task.statusGroup === "complete";
+      if (reopening && completing.has(task.id)) {
+        // Undo inside the fade-out window.
+        setCompleting((s) => { const n = new Set(s); n.delete(task.id); return n; });
+        replaceTask({ ...task, statusGroup: "todo" });
+      } else if (reopening) {
+        setLogbook((prev) => prev?.filter((x) => x.id !== task.id) ?? prev);
+      } else {
+        replaceTask({ ...task, statusGroup: "complete" });
+        setCompleting((s) => new Set(s).add(task.id));
+        window.setTimeout(() => {
+          setCompleting((s) => {
+            if (s.has(task.id)) {
+              setTasks((prev) => prev.filter((x) => x.id !== task.id));
+              setExpandedId((id) => (id === task.id ? null : id));
+            }
+            const n = new Set(s);
+            n.delete(task.id);
+            return n;
+          });
+        }, 1600);
+      }
+      try {
+        const updated = await api<Task>(`/api/tasks/${task.id}`, { method: "PATCH", body: JSON.stringify({ complete: !reopening }) });
+        if (reopening) setTasks((prev) => (prev.some((x) => x.id === updated.id) ? prev.map((x) => (x.id === updated.id ? updated : x)) : [...prev, updated]));
+      } catch (e) {
+        handleApiError(e);
+        load();
+      }
+    },
+    [completing, replaceTask, handleApiError, load],
+  );
+
+  const create = useCallback(
+    async (input: { title: string; databaseId: string; due?: string }) => {
+      setAdding(false);
+      try { localStorage.setItem("nt:lastDb", input.databaseId); } catch {}
+      try {
+        const t = await api<Task>("/api/tasks", { method: "POST", body: JSON.stringify(input) });
+        setTasks((prev) => [t, ...prev]);
+      } catch (e) {
+        handleApiError(e);
+      }
+    },
+    [handleApiError],
+  );
+
+  // ── Derived lists ──
+  const open = tasks;
+  const counts: Counts = useMemo(() => {
+    const byDb: Record<string, number> = {};
+    let todayN = 0, overdue = 0, upcoming = 0, anytime = 0;
+    for (const t of open) {
+      if (t.statusGroup === "complete") continue;
+      byDb[t.databaseId] = (byDb[t.databaseId] ?? 0) + 1;
+      const d = dayOnly(t.due);
+      if (!d) anytime++;
+      else if (d < today) { overdue++; todayN++; }
+      else if (d === today) todayN++;
+      else upcoming++;
+    }
+    return { today: todayN, overdue, upcoming, anytime, byDb };
+  }, [open, today]);
+
+  const view = list ?? desktopList;
+  const sections: Section[] = useMemo(() => {
+    if (searching && query.trim()) {
+      const q = query.trim().toLowerCase();
+      const hits = open.filter((t) => t.title.toLowerCase().includes(q)).sort(byDue);
+      return [{ key: "results", tasks: hits }];
+    }
+    if (view === "today") {
+      return [{ key: "today", tasks: open.filter((t) => { const d = dayOnly(t.due); return d && d <= today; }).sort(byDue) }];
+    }
+    if (view === "upcoming") {
+      const groups = new Map<string, Section>();
+      for (const t of open.filter((t) => { const d = dayOnly(t.due); return d && d > today; }).sort(byDue)) {
+        const d = dayOnly(t.due)!;
+        const date = parseDate(d);
+        let key: string, header: React.ReactNode;
+        if (daysBetween(today, d) <= 7) {
+          key = d;
+          header = <DayHeader date={d} today={today} />;
+        } else {
+          const month = date.toLocaleDateString(undefined, { month: "long", ...(date.getFullYear() !== parseDate(today).getFullYear() ? { year: "numeric" } : {}) });
+          key = d.slice(0, 7);
+          header = <SectionHeader title={key === today.slice(0, 7) ? `Rest of ${month}` : month} />;
+        }
+        if (!groups.has(key)) groups.set(key, { key, header, tasks: [] });
+        groups.get(key)!.tasks.push(t);
+      }
+      return Array.from(groups.values());
+    }
+    if (view === "anytime") {
+      return databases
+        .map((db) => ({
+          key: db.id,
+          header: <SectionHeader title={db.name} icon={<DbIcon icon={db.icon} size={16} />} />,
+          tasks: open.filter((t) => t.databaseId === db.id && !t.due).sort(byDue),
+        }))
+        .filter((s) => s.tasks.length);
+    }
+    if (view === "logbook") {
+      const groups = new Map<string, Section>();
+      for (const t of logbook ?? []) {
+        const d = localDateStr(new Date(t.lastEditedTime));
+        const diff = daysBetween(d, today);
+        const title = diff === 0 ? "Today" : diff === 1 ? "Yesterday" : parseDate(d).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+        if (!groups.has(title)) groups.set(title, { key: title, header: <SectionHeader title={title} />, tasks: [] });
+        groups.get(title)!.tasks.push(t);
+      }
+      return Array.from(groups.values());
+    }
+    // A single database, like a Things area.
+    const dbId = view.slice(3);
+    const inDb = open.filter((t) => t.databaseId === dbId).sort(byDue);
+    const groups: [string, (d?: string) => boolean][] = [
+      ["Overdue", (d) => !!d && d < today],
+      ["Today", (d) => d === today],
+      ["Upcoming", (d) => !!d && d > today],
+      ["No Due Date", (d) => !d],
+    ];
+    const out = groups
+      .map(([title, test]) => ({ key: title, header: <SectionHeader title={title} />, tasks: inDb.filter((t) => test(dayOnly(t.due))) }))
+      .filter((s) => s.tasks.length);
+    return out.length === 1 ? [{ ...out[0], header: undefined }] : out;
+  }, [view, open, today, databases, logbook, searching, query]);
+
+  // ── Render ──
+  if (!me) {
+    return (
+      <div className="flex h-[100dvh] items-center justify-center">
+        <Loader2 className="h-5 w-5 animate-spin text-faint" />
+      </div>
+    );
+  }
+  if (!me.signedIn) return <Welcome error={authError} />;
+  if (!me.configured || settingsOpen) {
+    return (
+      <Settings
+        me={me}
+        firstRun={!me.configured}
+        onDone={async () => {
+          setSettingsOpen(false);
+          setLoaded(false);
+          await loadMe();
+          load();
+        }}
+        onSignOut={async () => {
+          await fetch("/api/auth/logout", { method: "POST" });
+          if (cacheKey) try { localStorage.removeItem(cacheKey); } catch {}
+          setSettingsOpen(false);
+          setMe({ signedIn: false });
+        }}
+      />
+    );
+  }
+
+  const isDbView = view.startsWith("db:");
+  const currentDb = isDbView ? dbMap.get(view.slice(3)) : undefined;
+  const title = searching ? "Quick Find" : currentDb?.name ?? SMART_LISTS.find((l) => l.id === view)?.label ?? "";
+  const icon = searching ? <Search className="h-6 w-6 text-muted" /> : currentDb ? <DbIcon icon={currentDb.icon} size={26} /> : <ListIcon id={view} size={26} />;
+  const showHomeOnMobile = list === null && !searching;
+  const isEmpty = sections.every((s) => s.tasks.length === 0);
+  let lastDb: string | null = null;
+  try { lastDb = localStorage.getItem("nt:lastDb"); } catch {}
+  const defaultDbId = currentDb?.id ?? (lastDb && dbMap.has(lastDb) ? lastDb : databases[0]?.id);
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm"
-      style={{ opacity: mounted ? 1 : 0, transition: "opacity 0.25s" }}
-      onClick={onClose}>
-      <div className="absolute inset-x-0 rounded-t-2xl bg-white shadow-2xl px-5 pt-3 pb-6"
-        style={{ bottom: keyboardOffset, transform: mounted ? "translateY(0)" : "translateY(100%)", transition: "transform 0.35s cubic-bezier(0.32,0.72,0,1)" }}
-        onClick={e => e.stopPropagation()}>
-        <div className="flex justify-center mb-3">
-          <div className="w-10 h-1 rounded-full bg-stone-300" />
+    <div className="flex h-[100dvh] overflow-hidden bg-white">
+      <Sidebar
+        active={searching ? null : desktopList}
+        databases={databases}
+        counts={counts}
+        refreshing={refreshing}
+        onSelect={select}
+        onSettings={() => setSettingsOpen(true)}
+        onSearch={() => setSearching(true)}
+      />
+
+      {showHomeOnMobile && (
+        <div className="flex-1 overflow-y-auto md:hidden">
+          <MobileHome
+            active={null}
+            databases={databases}
+            counts={counts}
+            refreshing={refreshing}
+            onSelect={select}
+            onSettings={() => setSettingsOpen(true)}
+            onSearch={() => setSearching(true)}
+          />
         </div>
-        <p className="text-base font-semibold text-gray-900 mb-3">New task</p>
-        <input ref={inputRef} value={title} onChange={e => setTitle(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && onSubmit()}
-          placeholder="Task title" style={{ fontSize: "16px" }}
-          className="w-full border-b border-stone-200 pb-2 mb-4 text-gray-900 outline-none placeholder:text-stone-400 bg-transparent" />
-        <div className="flex items-center justify-between">
-          <div className="relative">
-            <select value={destination} onChange={e => setDestination(e.target.value)}
-              className="appearance-none bg-stone-100 rounded-full px-3 py-1.5 pr-7 text-sm text-stone-700 outline-none font-medium">
-              {databases.map(db => <option key={db.id} value={db.id}>{db.name}</option>)}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-stone-500" />
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={onClose} className="px-3 py-2 text-sm text-stone-500 hover:text-stone-700 transition-colors">Cancel</button>
-            <button onClick={onSubmit} disabled={!title.trim()}
-              className="px-4 py-2 rounded-xl bg-blue-500 text-sm text-white font-semibold transition-colors hover:bg-blue-600 disabled:opacity-40">
-              Add
+      )}
+
+      <main className={`${showHomeOnMobile ? "hidden md:block" : "block"} min-w-0 flex-1 overflow-y-auto`}>
+        <div key={searching ? "search" : view} className="pt-safe slide-in mx-auto max-w-[760px] px-5 md:px-14">
+          <div className="flex h-12 items-center md:hidden">
+            <button
+              onClick={() => (searching ? (setSearching(false), setQuery("")) : backToHome())}
+              className="-ml-2 flex items-center text-[17px] text-things-blue"
+            >
+              <ChevronLeft className="h-6 w-6" /> {searching && list ? "Back" : "Lists"}
             </button>
           </div>
+
+          <header className="mb-5 flex items-center gap-3 md:mb-7 md:mt-14">
+            {icon}
+            <h1 className="min-w-0 flex-1 truncate text-[28px] font-bold tracking-tight">{title}</h1>
+          </header>
+
+          {searching && (
+            <div className="mb-5 flex items-center gap-2 rounded-xl bg-zinc-100 px-3 py-2">
+              <Search className="h-4 w-4 text-muted" />
+              <input
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Escape" && (setSearching(false), setQuery(""))}
+                placeholder="Search all tasks"
+                className="min-w-0 flex-1 bg-transparent text-[16px] outline-none"
+              />
+              {query && (
+                <button onClick={() => setQuery("")} aria-label="Clear search"><X className="h-4 w-4 text-muted" /></button>
+              )}
+            </div>
+          )}
+
+          {loadErrors.length > 0 && !searching && (
+            <div className="mb-5 flex gap-2 rounded-xl bg-amber-50 px-3 py-2.5 text-[13px] text-amber-900">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                {loadErrors.map((e) => (
+                  <p key={e.databaseId}>{dbMap.get(e.databaseId)?.name ?? "A database"}: {e.message}</p>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {adding && defaultDbId && (
+            <NewTaskCard
+              databases={databases}
+              defaultDbId={defaultDbId}
+              defaultDue={view === "today" ? today : undefined}
+              onCreate={create}
+              onCancel={() => setAdding(false)}
+            />
+          )}
+
+          {!loaded || (view === "logbook" && logbook === null && !searching) ? (
+            <div className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-faint" /></div>
+          ) : isEmpty && !adding ? (
+            <div className="flex flex-col items-center py-20 text-center text-muted">
+              <span className="mb-3 opacity-25 grayscale">{searching ? <Search className="h-12 w-12" /> : currentDb ? <DbIcon icon={currentDb.icon} size={48} /> : <ListIcon id={view} size={48} />}</span>
+              <p className="text-[15px]">{searching ? (query ? "No matching tasks" : "Type to search all your tasks") : view === "logbook" ? "Nothing completed recently" : "Nothing here. Enjoy the calm."}</p>
+            </div>
+          ) : (
+            <TaskList
+              sections={sections}
+              dbs={dbMap}
+              meId={me.user?.id}
+              showDb={!isDbView}
+              hideDue={view === "upcoming" && !searching}
+              expandedId={expandedId}
+              onExpand={setExpandedId}
+              completing={completing}
+              onToggle={toggle}
+              onUpdated={replaceTask}
+              onError={showToast}
+            />
+          )}
         </div>
-      </div>
-    </div>
-  );
-}
+      </main>
 
-// ─── EmptyState ───────────────────────────────────────────────────────────────
+      {view !== "logbook" && !adding && databases.length > 0 && (
+        <button
+          onClick={startAdding}
+          aria-label="New task"
+          title="New task (N)"
+          className={`${showHomeOnMobile ? "hidden md:flex" : "flex"} bottom-safe fixed right-5 z-20 h-14 w-14 items-center justify-center rounded-full bg-things-blue text-white shadow-lg shadow-blue-500/30 transition-transform active:scale-95 md:right-8 md:h-12 md:w-12`}
+        >
+          <Plus className="h-7 w-7 md:h-6 md:w-6" strokeWidth={2.5} />
+        </button>
+      )}
 
-function EmptyState({ navView, hasQuery, sourceName }: { navView: NavView; hasQuery: boolean; sourceName?: string }) {
-  const msgMap: Record<string, { title: string; sub: string }> = {
-    inbox: { title: "Inbox zero 🎉", sub: "Nothing waiting to be sorted." },
-    today: { title: "All clear for today", sub: "No tasks due today or overdue." },
-    upcoming: { title: "Nothing upcoming", sub: "No tasks scheduled ahead." },
-    anytime: { title: "Nothing here", sub: "No tasks without a due date." },
-    delegated: { title: "Nothing delegated", sub: "No tasks assigned to others." },
-    source: { title: "All caught up", sub: `No open tasks in ${sourceName || "this database"}.` },
-  };
-  const msg = msgMap[navView] ?? msgMap.source;
-  return (
-    <div className="flex flex-col items-center justify-center py-24 text-center">
-      <div className="text-4xl mb-3 select-none">✓</div>
-      <p className="font-semibold text-gray-900">{hasQuery ? "No matching tasks" : msg.title}</p>
-      <p className="text-sm text-stone-400 mt-1">{hasQuery ? "Try a different search term." : msg.sub}</p>
-    </div>
-  );
-}
-
-// ─── LoadingState ─────────────────────────────────────────────────────────────
-
-function LoadingState() {
-  return (
-    <div className="pt-4 space-y-4">
-      {[75, 55, 85, 60, 70].map((w, i) => (
-        <div key={i} className="flex items-center gap-3">
-          <div className="w-5 h-5 rounded-full bg-stone-100 animate-pulse shrink-0" />
-          <div className="flex-1 space-y-1.5">
-            <div className="h-3.5 bg-stone-100 animate-pulse rounded" style={{ width: `${w}%` }} />
-            <div className="h-2.5 bg-stone-50 animate-pulse rounded w-20" />
-          </div>
+      {toast && (
+        <div className="bottom-safe fixed left-1/2 z-30 -translate-x-1/2 rounded-xl bg-ink px-4 py-2.5 text-sm text-white shadow-lg" role="status">
+          {toast}
         </div>
-      ))}
+      )}
     </div>
   );
 }
-
-
-
-
-

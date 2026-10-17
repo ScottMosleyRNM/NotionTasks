@@ -1,20 +1,23 @@
 import "./globals.css";
+import type { Metadata, Viewport } from "next";
 
-export const metadata = {
-  title: "Notion Tasks",
-  description: "Unified Notion task hub",
+export const metadata: Metadata = {
+  title: "Tasks",
+  description: "Your Notion tasks, in one calm list",
+  appleWebApp: { capable: true, title: "Tasks", statusBarStyle: "default" },
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#ffffff",
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="bg-zinc-900 text-zinc-50 antialiased" style={{ margin: 0 }}>
-        {children}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }
